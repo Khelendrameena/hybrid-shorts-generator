@@ -1,0 +1,273 @@
+"""REST API for the dashboard. All long work runs as background jobs;
+these endpoints start/poll/cancel them and serve editor + export data."""
+from __future__ import annotations
+
+import io
+import json
+import zipfile
+from pathlib import Path
+
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from pydantic import BaseModel
+
+from ..config import settings
+from ..jobs import progress, queue
+from ..storage import project_manager as pm
+
+router = APIRouter(prefix="/api")
+
+
+class YouTubeIn(BaseModel):
+    url: str
+    title: str | None = None
+
+
+class ProcessIn(BaseModel):
+    max_clips: int | None = None
+    min_score: float | None = None
+    language: str | None = None
+    ollama_model: str | None = None
+
+
+class ClipPatch(BaseModel):
+    start: float | None = None
+    end: float | None = None
+    status: str | None = None
+    metadata: dict | None = None
+
+
+class SettingsIn(BaseModel):
+    ollama_model: str | None = None
+    ollama_url: str | None = None
+    laya_model_id: str | None = None
+    whisper_model: str | None = None
+    max_clips: int | None = None
+    min_score: float | None = None
+    min_duration: float | None = None
+    max_duration: float | None = None
+    subtitle_theme: str | None = None
+    language: str | None = None
+
+
+@router.get("/health")
+def health():
+    from ..models.laya_engine import LayaEngine
+    from ..models.manager import model_manager
+    from ..models.ollama_engine import OllamaEngine
+
+    laya_ok, laya_msg = LayaEngine().available()
+    return {"ok": True, "laya": {"installed": laya_ok, "note": laya_msg,
+                                 "model": settings.laya_model_id},
+            "ollama": OllamaEngine().health(), "usage": model_manager.usage(),
+            "ollama_model": settings.ollama_model}
+
+
+@router.get("/settings")
+def get_settings():
+    return settings.as_dict()
+
+
+@router.post("/settings")
+def update_settings(body: SettingsIn):
+    # Runtime settings (persisted by the frontend in localStorage too; here we
+    # update the live process so the next job uses them immediately).
+    if body.ollama_model:
+        settings.ollama_model = body.ollama_model
+    if body.ollama_url:
+        settings.ollama_url = body.ollama_url.rstrip("/")
+    if body.laya_model_id:
+        settings.laya_model_id = body.laya_model_id
+    if body.whisper_model:
+        settings.whisper_model = body.whisper_model
+    if body.max_clips:
+        settings.max_clips = body.max_clips
+    if body.min_score is not None:
+        settings.min_clip_score = body.min_score
+    if body.min_duration:
+        settings.min_clip_duration = body.min_duration
+    if body.max_duration:
+        settings.max_clip_duration = body.max_duration
+    if body.subtitle_theme:
+        settings.subtitle_theme = body.subtitle_theme
+    if body.language:
+        settings.default_language = body.language
+    return settings.as_dict()
+
+
+@router.get("/projects")
+def projects():
+    return pm.list_projects()
+
+
+@router.post("/projects/youtube")
+def create_youtube(body: YouTubeIn):
+    from ..video.downloader import validate_youtube_url
+
+    if not validate_youtube_url(body.url):
+        raise HTTPException(400, "Invalid YouTube URL")
+    return pm.create_project(body.title or "YouTube video", "youtube", body.url.strip())
+
+
+@router.post("/projects/upload")
+async def create_upload(file: UploadFile = File(...), title: str = Form(default="")):
+    from ..video.downloader import SUPPORTED_EXTS
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in SUPPORTED_EXTS:
+        raise HTTPException(400, f"Unsupported format {ext}. Use MP4, MOV, MKV or WebM.")
+    project = pm.create_project(title or (file.filename or "Uploaded video"), "upload", file.filename or "")
+    dest = pm.project_dir(project["id"]) / f"source_{Path(file.filename).name}"
+    with open(dest, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+    pm.update_project(project["id"], video_path=str(dest))
+    return pm.get_project(project["id"])
+
+
+@router.get("/projects/{pid}")
+def get_project(pid: str):
+    p = pm.get_project(pid)
+    if not p:
+        raise HTTPException(404, "Project not found")
+    job = progress.latest_job(pid)
+    return {**p, "job": job, "clips": pm.list_clips(pid)}
+
+
+@router.post("/projects/{pid}/process")
+def process_project(pid: str, body: ProcessIn | None = None):
+    if not pm.get_project(pid):
+        raise HTTPException(404, "Project not found")
+    opts = body.model_dump(exclude_none=True) if body else {}
+    return queue.start_job(pid, opts)
+
+
+@router.post("/projects/{pid}/resume")
+def resume_project(pid: str):
+    """Resume = start a new job; the pipeline skips checkpointed stages."""
+    if not pm.get_project(pid):
+        raise HTTPException(404, "Project not found")
+    prev = progress.latest_job(pid)
+    job = queue.start_job(pid)
+    if prev:
+        # carry checkpoints forward so completed stages are skipped
+        progress.update_job(job["id"], checkpoint=prev.get("checkpoint") or {})
+        job = progress.get_job(job["id"])
+    return job
+
+
+@router.post("/jobs/{jid}/cancel")
+def cancel_job(jid: str):
+    progress.request_cancel(jid)
+    return {"ok": True}
+
+
+@router.get("/jobs/{jid}")
+def get_job(jid: str):
+    j = progress.get_job(jid)
+    if not j:
+        raise HTTPException(404, "Job not found")
+    return j
+
+
+@router.get("/projects/{pid}/transcript")
+def get_transcript(pid: str):
+    from ..transcription.whisper_engine import load_transcript
+
+    t = load_transcript(pm.project_dir(pid))
+    if not t:
+        raise HTTPException(404, "No transcript yet")
+    return t
+
+
+@router.get("/projects/{pid}/analysis")
+def get_analysis(pid: str):
+    p = pm.project_dir(pid) / "analysis.json"
+    cand = pm.project_dir(pid) / "candidates.json"
+    return {"analysis": json.loads(p.read_text(encoding="utf-8")) if p.exists() else None,
+            "candidates": json.loads(cand.read_text(encoding="utf-8")) if cand.exists() else []}
+
+
+@router.patch("/clips/{cid}")
+def patch_clip(cid: str, body: ClipPatch):
+    fields = body.model_dump(exclude_none=True)
+    if fields.get("start") is not None and fields.get("end") is not None and fields["end"] <= fields["start"]:
+        raise HTTPException(400, "End must be after start")
+    if fields.get("status") is not None and fields["status"] not in ("pending", "approved", "rejected", "rendered"):
+        raise HTTPException(400, "Invalid status")
+    if not fields:
+        raise HTTPException(400, "Nothing to update")
+    pm.update_clip(cid, **fields)
+    return {"ok": True}
+
+
+@router.post("/clips/{cid}/regenerate")
+def regenerate_clip(cid: str):
+    from ..models.ollama_engine import OllamaEngine
+    from ..storage import database as db
+
+    row = db.query_one("SELECT * FROM clips WHERE id=?", (cid,))
+    if not row:
+        raise HTTPException(404, "Clip not found")
+    clip = {"id": cid, "transcript": row["transcript"], "category": row["category"], "score": row["score"]}
+    md = OllamaEngine().generate_metadata(clip)
+    pm.update_clip(cid, metadata=md)
+    return md
+
+
+@router.post("/projects/{pid}/render")
+def render_project(pid: str):
+    import threading
+
+    if not pm.get_project(pid):
+        raise HTTPException(404, "Project not found")
+    job = progress.create_job(pid)
+    progress.update_job(job["id"], stage="rendering", progress=0, message="Rendering approved Shorts…")
+    threading.Thread(target=queue.render_all_approved, args=(job["id"], pid), daemon=True).start()
+    return job
+
+
+@router.get("/projects/{pid}/clips/{cid}/download")
+def download_clip(pid: str, cid: str):
+    from ..storage import database as db
+
+    row = db.query_one("SELECT * FROM clips WHERE id=? AND project_id=?", (cid, pid))
+    if not row or not row.get("output_path") or not Path(row["output_path"]).exists():
+        raise HTTPException(404, "Rendered file not found — render the clip first")
+    return FileResponse(row["output_path"], media_type="video/mp4",
+                        filename=Path(row["output_path"]).name)
+
+
+@router.get("/projects/{pid}/export.zip")
+def export_zip(pid: str):
+    p = pm.get_project(pid)
+    if not p:
+        raise HTTPException(404, "Project not found")
+    pdir = pm.project_dir(pid)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in (pdir / "renders").glob("*.mp4"):
+            z.write(f, f"shorts/{f.name}")
+        clips = pm.list_clips(pid)
+        z.writestr("metadata.json", json.dumps(clips, ensure_ascii=False, indent=2))
+        from ..rendering.ffmpeg_engine import export_srt_for_clip
+        from ..transcription.whisper_engine import load_transcript
+
+        t = load_transcript(pdir)
+        if t:
+            for c in clips:
+                z.writestr(f"srt/{c.get('display_id') or c['id']}.srt",
+                           export_srt_for_clip(t["segments"], c["start"], c["end"]))
+            z.write(pdir / "transcript.srt", "transcript.srt")
+            z.write(pdir / "transcript.json", "transcript.json")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{pid}-shorts.zip"'})
+
+
+@router.get("/projects/{pid}/transcript.srt", response_class=PlainTextResponse)
+def transcript_srt(pid: str):
+    p = pm.project_dir(pid) / "transcript.srt"
+    if not p.exists():
+        raise HTTPException(404, "No transcript yet")
+    return p.read_text(encoding="utf-8")

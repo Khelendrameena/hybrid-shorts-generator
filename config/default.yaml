@@ -1,0 +1,42 @@
+# Default configuration — overridden by environment variables / .env / Settings UI.
+laya:
+  model_id: "convaiinnovations/laya-multilingual"
+  device: "auto"          # auto | cpu | cuda
+  max_len: 1024           # multilingual checkpoint: 1024 default, up to 8192
+  enabled: true
+ollama:
+  url: "http://localhost:11434"
+  model: "qwen3:4b"
+  timeout: 120
+  keep_alive: "0"         # unload from VRAM immediately after generation
+whisper:
+  model: "small"          # tiny|base|small|medium — small fits RTX 3050 4GB
+  device: "auto"
+  compute_type: "default" # float16 on GPU, int8 on CPU fallback
+scoring:
+  weights:
+    hook_strength: 0.20
+    emotional_intensity: 0.15
+    information_value: 0.15
+    standalone_context: 0.15
+    story_completeness: 0.15
+    speech_clarity: 0.10
+    visual_suitability: 0.10
+    # repetition penalty is subtracted in full (0..100 scaled by overlap)
+  max_clips: 10
+  min_score: 55
+clips:
+  min_duration: 15
+  preferred_max_duration: 60
+  max_duration: 180
+  padding_before: 0.4
+  padding_after: 0.6
+render:
+  width: 1080
+  height: 1920
+  subtitle_theme: "dynamic"   # dynamic | classic | minimal | bold-yellow
+  normalize_audio: true
+  remove_silence: false
+video:
+  frame_interval_seconds: 2.0
+  supported_extensions: [".mp4", ".mov", ".mkv", ".webm"]

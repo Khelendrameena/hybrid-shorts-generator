@@ -1,0 +1,39 @@
+# Hybrid AI YouTube Shorts Generator — Python dependencies
+# Python 3.10+ required (Laya requires 3.10+). Tested on 3.11 / 3.12.
+# Install on Windows: setup.bat handles this. Manual: pip install -r requirements.txt
+
+# --- Web API ---
+fastapi>=0.111
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3
+python-multipart>=0.0.9
+httpx>=0.27
+
+# --- Model A: Laya decision engine (real package, Apache-2.0) ---
+# convaiinnovations/laya-multilingual — mmBERT-base, 322M params, NON-generative.
+# pip package name is `laya`. It pulls torch + transformers on first install.
+laya>=0.3.4
+
+# --- Transcription: Faster-Whisper (local, multilingual, word timestamps) ---
+faster-whisper>=1.0.3
+ctranslate2>=4.3
+
+# --- Video ingestion ---
+yt-dlp>=2024.10.7
+
+# --- Video understanding ---
+opencv-python-headless>=4.10
+numpy>=1.26
+scenedetect[headless]>=0.6.3
+Pillow>=10.4
+# OCR is optional and heavy (EasyOCR pulls torch). Install only if you want
+# on-screen text extraction:  pip install easyocr
+# The code degrades gracefully to "no OCR" when it is absent.
+
+# --- Utilities ---
+PyYAML>=6.0
+psutil>=6.0
+
+# --- Dev / tests ---
+pytest>=8.2
