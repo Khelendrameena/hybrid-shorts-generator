@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -71,12 +72,16 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
             progress.update_job(job_id, stage="transcribing", progress=0, message="Transcribing with Faster-Whisper…")
             from ..transcription.whisper_engine import WhisperEngine
 
+            _t0 = time.perf_counter()
             transcript = WhisperEngine().transcribe(
                 video_path, pdir, language=opts.get("language") or settings.default_language,
                 progress_cb=_cb(job_id, "transcribing"))
+            _el = time.perf_counter() - _t0
+            print(f"[pipeline] transcribe took {_el:.1f}s (device={transcript.get('device')})", flush=True)
             pm.save_transcript_ref(project_id, str(tpath), str(pdir / "transcript.srt"), transcript["language"])
             pm.update_project(project_id, language=transcript["language"])
-            progress.update_job(job_id, checkpoint={"transcript_done": True})
+            progress.update_job(job_id, checkpoint={"transcript_done": True},
+                                message=f"Transcribed in {_el:.0f}s on {transcript.get('device', 'cpu')}")
 
         # ---- video understanding -------------------------------------------
         analysis_path = pdir / "analysis.json"
@@ -84,6 +89,7 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
             analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
         else:
             progress.update_job(job_id, stage="analysing_video", progress=5, message="Detecting scenes, faces, audio energy…")
+            _t0 = time.perf_counter()
             from ..video.face_tracker import track_faces
             from ..video.frame_extractor import audio_energy_profile, extract_frames
             from ..video.scene_detector import detect_scenes
@@ -94,10 +100,12 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
             energy = audio_energy_profile(video_path)
             faces = track_faces(video_path, duration=duration)
             analysis = {"scenes": scenes, "frames": frames, "audio_energy": energy, "face_track": faces}
+            _el = time.perf_counter() - _t0
+            print(f"[pipeline] video analysis took {_el:.1f}s", flush=True)
             analysis_path.write_text(json.dumps(analysis), encoding="utf-8")
             progress.update_job(job_id, checkpoint={"analysis_done": True},
                                 stage="analysing_video", progress=100,
-                                message=f"{len(scenes)} scenes, {len(frames)} frames analysed")
+                                message=f"{len(scenes)} scenes, {len(frames)} frames analysed in {_el:.0f}s")
 
         # ---- Laya candidates (checkpointed) ---------------------------------
         clips_path = pdir / "candidates.json"
@@ -106,6 +114,7 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
             clips = json.loads(clips_path.read_text(encoding="utf-8"))
         else:
             progress.update_job(job_id, stage="laya_analysis", progress=0, message="Laya is scoring candidate moments…")
+            _t0 = time.perf_counter()
             from ..analysis.candidate_detector import detect_candidates
             from ..models.laya_engine import LayaEngine
 
@@ -121,9 +130,11 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
                 c["status"] = "pending"
                 pm.save_clip(c)
             clips_path.write_text(json.dumps(clips, ensure_ascii=False, indent=2), encoding="utf-8")
+            _el = time.perf_counter() - _t0
+            print(f"[pipeline] laya analysis took {_el:.1f}s", flush=True)
             progress.update_job(job_id, checkpoint={"candidates_done": True},
                                 stage="laya_analysis", progress=100,
-                                message=f"{len(clips)} clips selected")
+                                message=f"{len(clips)} clips selected in {_el:.0f}s")
 
         # ---- Ollama metadata --------------------------------------------------
         if not ckpt.get("metadata_done"):
@@ -132,18 +143,30 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
 
             ollama = OllamaEngine(model=opts.get("ollama_model") or settings.ollama_model)
             total = max(1, len(clips))
+            _t0 = time.perf_counter()
+            _via_ollama = 0
+            _fb_reason = ""
             for i, c in enumerate(clips):
                 if progress.is_cancelled(job_id):
                     raise InterruptedError("Cancelled by user")
                 md = ollama.generate_metadata(c, language=opts.get("language") or settings.default_language)
                 c["metadata"] = md
+                if str(md.get("source", "")).startswith("ollama"):
+                    _via_ollama += 1
+                else:
+                    _fb_reason = md.get("fallback_reason") or _fb_reason
                 pm.update_clip(c["id"], metadata=md)
                 progress.update_job(job_id, stage="ollama_generation",
                                     progress=(i + 1) / total * 100.0,
                                     message=f"Metadata {i + 1}/{total}")
             ollama.unload()
+            _el = time.perf_counter() - _t0
+            print(f"[pipeline] metadata took {_el:.1f}s ({_via_ollama}/{total} via Ollama)", flush=True)
+            _msg = f"Metadata done in {_el:.0f}s — {_via_ollama}/{total} via Ollama"
+            if _via_ollama < total:
+                _msg += f"; fallback used ({_fb_reason})"
             clips_path.write_text(json.dumps(clips, ensure_ascii=False, indent=2), encoding="utf-8")
-            progress.update_job(job_id, checkpoint={"metadata_done": True})
+            progress.update_job(job_id, checkpoint={"metadata_done": True}, message=_msg)
 
         pm.update_project(project_id, status="ready")
         progress.update_job(job_id, stage="done", progress=100,

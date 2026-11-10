@@ -168,9 +168,15 @@ class LayaEngine:
         if self._agent is None and not self.load():
             return None
         state = {"body": text}
+        # Dynamic context: a <=60s clip is ~200 tokens of transcript; padding
+        # every CPU inference to the full 1024 budget roughly doubles the
+        # stage time for nothing. Estimate generously (words*2.2 + question
+        # overhead) and clamp to [320, settings.laya_max_len].
+        est = int(len(text.split()) * 2.2) + 256
+        max_len = max(320, min(settings.laya_max_len, est))
         try:
             try:
-                result = self._agent.predict(state, QUESTIONS, max_len=settings.laya_max_len)
+                result = self._agent.predict(state, QUESTIONS, max_len=max_len)
             except TypeError:
                 result = self._agent.predict(state, QUESTIONS)
             if isinstance(result, dict) and "answers" in result:

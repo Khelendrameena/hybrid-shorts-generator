@@ -58,6 +58,7 @@ class Settings:
     laya_model_id: str = str(_get("laya", "model_id", "LAYA_MODEL_ID", "convaiinnovations/laya-multilingual"))
     laya_device: str = str(_get("laya", "device", "LAYA_DEVICE", "auto"))
     laya_max_len: int = _i("laya", "max_len", "LAYA_MAX_LEN", 1024)
+    laya_max_windows: int = _i("laya", "max_windows", "LAYA_MAX_WINDOWS", 0)
     laya_enabled: bool = str(_get("laya", "enabled", "LAYA_ENABLED", "true")).lower() in ("1", "true", "yes")
 
     # Ollama

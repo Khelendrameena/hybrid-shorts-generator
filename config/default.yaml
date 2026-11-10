@@ -3,6 +3,7 @@ laya:
   model_id: "convaiinnovations/laya-multilingual"
   device: "auto"          # auto | cpu | cuda
   max_len: 1024           # multilingual checkpoint: 1024 default, up to 8192
+  max_windows: 0          # 0 = auto budget of Laya-scored windows (duration-based)
   enabled: true
 ollama:
   url: "http://localhost:11434"

@@ -72,7 +72,7 @@ def render_clip(video_path: str | Path, start: float, end: float,
                 "-map", "[vout]", "-map", "[aout]"]
     else:
         cmd += ["-vf", vf, "-af", af]
-    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
+    cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "20", "-pix_fmt", "yuv420p",
             "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
             "-shortest", str(out_path)]
     if progress_cb:

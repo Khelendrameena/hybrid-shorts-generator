@@ -1,11 +1,17 @@
 "use client";
-import { useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { api, fmtTime } from "../../services/api";
 import { useProject } from "../../hooks/useProject";
 
 function EditorInner() {
   const { pid, project } = useProject();
   const [msg, setMsg] = useState("");
+  const [rendering, setRendering] = useState(false);
+  const [renderErr, setRenderErr] = useState("");
+  const pollRef = useRef<any>(null);
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
+
   if (!pid) return <p className="text-white/50">No project selected.</p>;
   const clips = project?.clips || [];
 
@@ -15,13 +21,52 @@ function EditorInner() {
     setTimeout(() => location.reload(), 500);
   }
 
+  async function startRender() {
+    if (!pid || rendering) return;
+    setRenderErr("");
+    setRendering(true);
+    setMsg("Rendering started…");
+    try {
+      await api.render(pid);
+    } catch (e: any) {
+      setRendering(false);
+      setRenderErr(String(e?.message || e));
+      return;
+    }
+    const t0 = Date.now();
+    pollRef.current = setInterval(async () => {
+      try {
+        const p = await api.project(pid);
+        const job = p?.job;
+        if (job?.stage === "rendering") {
+          setMsg(`🎬 Rendering… ${Math.round(job.progress || 0)}% — ${job.message || ""}`);
+        } else if (job?.stage === "done") {
+          clearInterval(pollRef.current);
+          setRendering(false);
+          setMsg("✅ Rendering complete — download links are on each clip.");
+          setTimeout(() => location.reload(), 900);
+        } else if (job?.stage === "failed" || job?.stage === "cancelled") {
+          clearInterval(pollRef.current);
+          setRendering(false);
+          setRenderErr(job.error || `Render ${job.stage} — check the backend terminal for the FFmpeg error.`);
+        }
+      } catch {}
+      if (Date.now() - t0 > 15 * 60 * 1000) {
+        clearInterval(pollRef.current);
+        setRendering(false);
+        setMsg("Rendering is taking long — check the Processing page or backend terminal.");
+      }
+    }, 3000);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-xl font-bold">Shorts Editor</h1>
-        <button onClick={async () => { await api.render(pid); setMsg("Rendering approved clips — watch progress in Processing."); }}
-          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-black">🎬 Render approved clips</button>
+        <button onClick={startRender} disabled={rendering}
+          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">🎬 Render approved clips</button>
         {msg && <span className="text-sm text-accent">{msg}</span>}
+        {renderErr && <span className="text-sm text-red-400">⚠ {renderErr}</span>}
       </div>
       <p className="text-xs text-white/40">Timestamps and scores come from Laya and are shown for review — editing a title never changes them. Change start/end here if you want a different cut, then Approve.</p>
       {clips.length === 0 && <p className="text-sm text-white/40">No clips yet.</p>}

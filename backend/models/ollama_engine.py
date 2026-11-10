@@ -74,6 +74,17 @@ class OllamaEngine:
         except Exception as e:
             return {"online": False, "error": str(e)[:200]}
 
+    def _gate_reason(self) -> str | None:
+        """None if generation is worth attempting, else why it would fail."""
+        h = self.health()
+        if not h.get("online"):
+            return (f"Ollama offline at {self.url} ({h.get('error', 'no response')}). "
+                    f"Start Ollama, or check OLLAMA_URL.")
+        if not h.get("model_present"):
+            return (f"Ollama model '{self.model}' is not pulled. "
+                    f"Run: ollama pull {self.model}")
+        return None
+
     def unload(self) -> bool:
         """Tell Ollama to evict the model from VRAM immediately."""
         try:
@@ -108,6 +119,17 @@ Return keys: clip_id, title, alternative_titles, opening_hook, description, hash
 
     def generate_metadata(self, clip: dict, language: str = "auto") -> dict:
         model_manager.acquire("ollama")
+        # Health gate FIRST: if the server is offline or the model was never
+        # pulled, 3 generation attempts would each burn a long timeout for a
+        # guaranteed failure. Fall back immediately with an actionable reason.
+        gate = self._gate_reason()
+        if gate:
+            from ..generation.metadata_generator import fallback_metadata
+
+            fb = fallback_metadata(clip, language)
+            fb["source"] = "fallback"
+            fb["fallback_reason"] = gate
+            return fb
         last_err = None
         for attempt in range(3):
             try:

@@ -62,16 +62,36 @@ def detect_candidates(transcript: dict, video_duration: float,
     min_score = settings.min_clip_score if min_score is None else min_score
 
     windows = generate_windows(segments, settings.min_clip_duration, settings.preferred_max_duration)
-    # Cheap pre-filter: enough words to be a real moment, sorted by a density
-    # heuristic so Laya spends its passes on the most promising windows first.
+    # Cheap pre-filter: enough words to be a real moment.
     windows = [w for w in windows if len(w["text"].split()) >= 25]
-    windows.sort(key=lambda w: (w["text"].count("?") + w["text"].count("!"), len(w["text"])), reverse=True)
-    windows = windows[:120]  # bounded Laya workload per video
+
+    # --- Heuristic pre-rank (fast, pure math) -------------------------------
+    # Scoring EVERY window with Laya was the pipeline's biggest cost: up to
+    # 120 CPU inference passes over heavily-overlapping windows. Instead,
+    # score all windows with the deterministic feature extractor first
+    # (milliseconds each), drop hopeless ones, and spend the Laya budget only
+    # on the most promising windows. Laya still makes the final call on
+    # everything that can plausibly become a clip.
+    from .feature_extractor import extract_features
+    from .scoring import COMPONENTS
+
+    pre: list[tuple[float, float, dict]] = []
+    for w in windows:
+        _, _, face_cov = dominant_face_center(face_track or [], w["start"], w["end"])
+        heur = extract_features(w["text"], w["segments"], audio_energy,
+                                w["start"], w["end"], face_cov)
+        h_score = final_score({k: heur[k] for k in COMPONENTS})
+        if h_score >= min_score - 25:  # generous gate: blend can still lift it
+            pre.append((h_score, face_cov, w))
+    pre.sort(key=lambda p: p[0], reverse=True)
+    budget = settings.laya_max_windows
+    if budget <= 0:  # auto: ~1 Laya pass per 9s of video, bounded 20..80
+        budget = max(20, min(80, int(video_duration // 9)))
+    pre = pre[:budget]
 
     scored: list[dict] = []
-    total = max(1, len(windows))
-    for idx, w in enumerate(windows):
-        _, _, face_cov = dominant_face_center(face_track or [], w["start"], w["end"])
+    total = max(1, len(pre))
+    for idx, (_h, face_cov, w) in enumerate(pre):
         result = laya.score_candidate(w["text"], w["segments"], audio_energy,
                                       w["start"], w["end"], face_cov)
         score = final_score(result["scores"])
