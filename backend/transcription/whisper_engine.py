@@ -46,6 +46,34 @@ def _decode_audio_ffmpeg(media_path: str | Path):
     return np.frombuffer(proc.stdout, dtype=np.float32).copy()
 
 
+def _cuda_usable() -> bool:
+    """True only if a CUDA device exists AND its runtime libraries load.
+
+    A device count alone is not enough: under WSL, ctranslate2 sees the GPU
+    through the Windows driver, but libcublas.so.12 is missing unless the
+    CUDA toolkit is installed — picking "cuda" then crashes mid-transcribe
+    with `RuntimeError: Library libcublas.so.12 is not found or cannot be
+    loaded` (seen 2026-11-10). Probing the library up front keeps "auto"
+    honest: no cuBLAS -> CPU, no crash.
+    """
+    try:
+        import ctranslate2  # type: ignore
+
+        if ctranslate2.get_cuda_device_count() == 0:
+            return False
+    except Exception:
+        return False
+    import ctypes
+
+    for lib in ("libcublas.so.12", "libcublas.so", "cublas64_12.dll"):
+        try:
+            ctypes.CDLL(lib)
+            return True
+        except OSError:
+            continue
+    return False
+
+
 def _fmt_srt_time(t: float) -> str:
     ms = int(round(t * 1000))
     h, ms = divmod(ms, 3600000)
@@ -70,20 +98,15 @@ class WhisperEngine:
         self.device_pref = device or settings.whisper_device
         self._model = None
 
-    def _load(self):
-        if self._model is not None:
+    def _load(self, force_cpu: bool = False):
+        if self._model is not None and not force_cpu:
             return self._model
         from faster_whisper import WhisperModel  # local import: heavy
 
-        device = self.device_pref
+        device = "cpu" if force_cpu else self.device_pref
         compute = settings.whisper_compute_type
         if device == "auto":
-            try:
-                import ctranslate2  # type: ignore
-
-                device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
-            except Exception:
-                device = "cpu"
+            device = "cuda" if _cuda_usable() else "cpu"
         if compute == "default":
             compute = "float16" if device == "cuda" else "int8"
         try:
@@ -112,6 +135,40 @@ class WhisperEngine:
             audio_input = _decode_audio_ffmpeg(media_path)
         except Exception:
             audio_input = str(media_path)
+        try:
+            segments, info = self._consume(model, audio_input, lang, progress_cb)
+        except RuntimeError as exc:
+            # CUDA can still fail at encode time (missing cuBLAS/cuDNN) even
+            # when model construction succeeded — retry once on CPU instead
+            # of killing the job.
+            msg = str(exc).lower()
+            if getattr(self, "_device", "cpu") == "cpu" or not any(
+                k in msg for k in ("cublas", "cudnn", "cuda", "libcudart")
+            ):
+                raise
+            self._model = None
+            model = self._load(force_cpu=True)
+            segments, info = self._consume(model, audio_input, lang, progress_cb)
+        duration = float(info.duration or 0)
+
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result = {
+            "language": info.language, "language_probability": round(float(info.language_probability), 3),
+            "duration": duration, "model": self.model_size, "device": getattr(self, "_device", "cpu"),
+            "segments": segments,
+            "full_text": " ".join(s["text"] for s in segments),
+        }
+        (out_dir / "transcript.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        (out_dir / "transcript.srt").write_text(segments_to_srt(segments), encoding="utf-8")
+        if progress_cb:
+            progress_cb(100.0, f"Transcription complete ({info.language})")
+        self.unload()  # free VRAM for Laya next
+        return result
+
+    def _consume(self, model, audio_input, lang, progress_cb):
+        """Run one transcription pass and materialize all segments (the
+        generator is lazy — CUDA errors surface here, during iteration)."""
         segments_iter, info = model.transcribe(
             audio_input, language=lang, beam_size=5,
             word_timestamps=True, vad_filter=True,
@@ -139,21 +196,7 @@ class WhisperEngine:
             prev_end = float(seg.end)
             if progress_cb and duration:
                 progress_cb(min(99.0, seg.end / duration * 100.0), f"Transcribing… {int(seg.end)}s / {int(duration)}s")
-
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        result = {
-            "language": info.language, "language_probability": round(float(info.language_probability), 3),
-            "duration": duration, "model": self.model_size, "device": getattr(self, "_device", "cpu"),
-            "segments": segments,
-            "full_text": " ".join(s["text"] for s in segments),
-        }
-        (out_dir / "transcript.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-        (out_dir / "transcript.srt").write_text(segments_to_srt(segments), encoding="utf-8")
-        if progress_cb:
-            progress_cb(100.0, f"Transcription complete ({info.language})")
-        self.unload()  # free VRAM for Laya next
-        return result
+        return segments, info
 
 
 def load_transcript(project_dir_path: str | Path) -> dict | None:
