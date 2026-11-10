@@ -21,8 +21,14 @@ function EditorInner() {
     setTimeout(() => location.reload(), 500);
   }
 
+  const approvedCount = clips.filter((c: any) => c.status === "approved" || c.status === "rendered").length;
+
   async function startRender() {
     if (!pid || rendering) return;
+    if (approvedCount === 0) {
+      setRenderErr("Pehle kam se kam ek clip ko ✓ Approve karo — abhi koi approved clip nahi hai, isliye render karne ke liye kuch hai hi nahi.");
+      return;
+    }
     setRenderErr("");
     setRendering(true);
     setMsg("Rendering started…");
@@ -64,7 +70,7 @@ function EditorInner() {
       <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-xl font-bold">Shorts Editor</h1>
         <button onClick={startRender} disabled={rendering}
-          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">🎬 Render approved clips</button>
+          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-black disabled:opacity-50">🎬 Render approved clips ({approvedCount})</button>
         {msg && <span className="text-sm text-accent">{msg}</span>}
         {renderErr && <span className="text-sm text-red-400">⚠ {renderErr}</span>}
       </div>
@@ -99,6 +105,14 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
         <span className="text-white/50">{fmtTime(start)} → {fmtTime(end)}</span>
         <button onClick={() => onPatch(c.id, { start, end }, "Timestamps updated")} className="rounded bg-white/10 px-3 py-1">Save cut</button>
       </div>
+      {c.output_path && (
+        <div className="flex items-start gap-3">
+          <video controls preload="metadata" src={api.downloadUrl(pid, c.id)}
+            className="w-40 aspect-[9/16] rounded-xl bg-black" />
+          <p className="text-xs text-white/50">✅ Rendered Short — yahi play karke dekho, ya upar ⬇ Download MP4 se file lo.
+            Saari rendered Shorts ek saath chahiye to Export page se ZIP download karo.</p>
+        </div>
+      )}
       <p className="text-sm text-white/70 line-clamp-3">“{c.transcript}”</p>
       <label className="block text-xs text-white/50">Title
         <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full rounded bg-black/30 px-3 py-2 text-sm text-white" /></label>

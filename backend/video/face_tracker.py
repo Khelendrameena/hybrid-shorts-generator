@@ -20,7 +20,7 @@ def _cascade():
         return None  # minimal OpenCV builds may lack CascadeClassifier — degrade, never crash
 
 
-def track_faces(video_path: str | Path, sample_interval: float = 1.0,
+def track_faces(video_path: str | Path, sample_interval: float = 2.0,
                 duration: float | None = None) -> list[dict]:
     try:
         import cv2  # type: ignore

@@ -149,7 +149,11 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
             for i, c in enumerate(clips):
                 if progress.is_cancelled(job_id):
                     raise InterruptedError("Cancelled by user")
-                md = ollama.generate_metadata(c, language=opts.get("language") or settings.default_language)
+                # keep_alive="5m": keep the model loaded across clips in this
+                # stage (reload per clip cost 10-20s each); queue unloads it
+                # once at stage end via ollama.unload().
+                md = ollama.generate_metadata(c, language=opts.get("language") or settings.default_language,
+                                              keep_alive="5m")
                 c["metadata"] = md
                 if str(md.get("source", "")).startswith("ollama"):
                     _via_ollama += 1
@@ -200,6 +204,10 @@ def render_all_approved(job_id: str, project_id: str) -> None:
     analysis = json.loads(analysis_path.read_text(encoding="utf-8")) if analysis_path.exists() else {}
     vmeta = (project.get("meta") or {}).get("video", {})
     clips = [c for c in pm.list_clips(project_id) if c["status"] in ("approved", "rendered")]
+    if not clips:
+        progress.update_job(job_id, stage="failed",
+                            error="Koi approved clip nahi hai — pehle Editor me clip ko ✓ Approve karo, phir Render dabao.")
+        return
     total = max(1, len(clips))
     try:
         for i, c in enumerate(clips):
@@ -214,7 +222,8 @@ def render_all_approved(job_id: str, project_id: str) -> None:
             pm.update_clip(c["id"], status="rendered", output_path=str(out))
             progress.update_job(job_id, stage="rendering", progress=(i + 1) / total * 100.0,
                                 message=f"Rendered {i + 1}/{total}")
-        progress.update_job(job_id, stage="done", progress=100, message="All approved Shorts rendered")
+        progress.update_job(job_id, stage="done", progress=100,
+                            message=f"{len(clips)} Short(s) rendered — Editor/Export page par preview + download milega. Files: {pdir / 'renders'}")
     except InterruptedError:
         progress.update_job(job_id, stage="cancelled", message="Render cancelled")
     except Exception as e:

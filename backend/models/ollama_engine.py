@@ -117,7 +117,8 @@ Rules:
 - language: Hindi, English or Hinglish.
 Return keys: clip_id, title, alternative_titles, opening_hook, description, hashtags, thumbnail_text, language, caption_style."""
 
-    def generate_metadata(self, clip: dict, language: str = "auto") -> dict:
+    def generate_metadata(self, clip: dict, language: str = "auto",
+                          keep_alive: str | None = None) -> dict:
         model_manager.acquire("ollama")
         # Health gate FIRST: if the server is offline or the model was never
         # pulled, 3 generation attempts would each burn a long timeout for a
@@ -137,8 +138,16 @@ Return keys: clip_id, title, alternative_titles, opening_hook, description, hash
                     r = c.post(f"{self.url}/api/chat", json={
                         "model": self.model, "stream": False,
                         "format": METADATA_SCHEMA,
-                        "keep_alive": settings.ollama_keep_alive,
-                        "options": {"temperature": 0.4, "num_ctx": 4096},
+                        # qwen3 is a *thinking* model: by default it burns
+                        # hundreds of tokens reasoning before answering, even
+                        # with "no thinking" in the prompt. think=False turns
+                        # that off server-side (ignored by older Ollama).
+                        # num_predict caps the JSON answer (~250 tokens) so a
+                        # rambling generation can't eat minutes per clip.
+                        "think": False,
+                        "keep_alive": keep_alive or settings.ollama_keep_alive,
+                        "options": {"temperature": 0.4, "num_ctx": 4096,
+                                    "num_predict": 400},
                         "messages": [
                             {"role": "system", "content": "You output only valid JSON."},
                             {"role": "user", "content": self._prompt(clip, language)},

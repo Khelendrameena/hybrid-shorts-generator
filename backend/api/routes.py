@@ -222,7 +222,16 @@ def render_project(pid: str):
     if not pm.get_project(pid):
         raise HTTPException(404, "Project not found")
     job = progress.create_job(pid)
-    progress.update_job(job["id"], stage="rendering", progress=0, message="Rendering approved Shorts…")
+    approved = [c for c in pm.list_clips(pid) if c["status"] in ("approved", "rendered")]
+    if not approved:
+        # Old behaviour silently reported "done" with zero renders — the user
+        # saw "render ho gaya" but no file existed anywhere. Fail loudly.
+        progress.update_job(
+            job["id"], stage="failed",
+            error="Koi approved clip nahi hai — pehle Editor me clip ko ✓ Approve karo, phir Render dabao.")
+        return progress.get_job(job["id"]) or job
+    progress.update_job(job["id"], stage="rendering", progress=0,
+                        message=f"Rendering {len(approved)} approved Short(s)…")
     threading.Thread(target=queue.render_all_approved, args=(job["id"], pid), daemon=True).start()
     return job
 

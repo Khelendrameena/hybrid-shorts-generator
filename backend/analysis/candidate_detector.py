@@ -85,8 +85,8 @@ def detect_candidates(transcript: dict, video_duration: float,
             pre.append((h_score, face_cov, w))
     pre.sort(key=lambda p: p[0], reverse=True)
     budget = settings.laya_max_windows
-    if budget <= 0:  # auto: ~1 Laya pass per 9s of video, bounded 20..80
-        budget = max(20, min(80, int(video_duration // 9)))
+    if budget <= 0:  # auto: ~1 Laya pass per 12s of video, bounded 16..60
+        budget = max(16, min(60, int(video_duration // 12)))
     pre = pre[:budget]
 
     scored: list[dict] = []

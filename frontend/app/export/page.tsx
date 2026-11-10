@@ -22,12 +22,18 @@ function ExportPageInner() {
       <div className="grid gap-3">
         {clips.map((c: any) => (
           <div key={c.id} className="flex items-center gap-3 rounded-2xl bg-panel p-4 flex-wrap">
+            {c.output_path && (
+              <video controls preload="metadata" src={api.downloadUrl(pid, c.id)}
+                className="w-24 aspect-[9/16] rounded-lg bg-black" />
+            )}
             <b>{c.display_id || c.id}</b>
             <span className="text-sm text-white/60">{c.metadata?.title || "(no title)"}</span>
             <span className="text-xs text-white/40">{fmtTime(c.start)} → {fmtTime(c.end)} · score {Math.round(c.score)} · {c.status}</span>
             {c.output_path
-              ? <a className="ml-auto text-sm text-accent underline" href={api.downloadUrl(pid, c.id)}>⬇ MP4</a>
-              : <span className="ml-auto text-xs text-white/30">not rendered</span>}
+              ? <a className="ml-auto text-sm text-accent underline" href={api.downloadUrl(pid, c.id)}>⬇ MP4 download</a>
+              : <span className="ml-auto text-xs text-white/30">
+                  {c.status === "approved" ? "approved — Editor se Render karo" : "not rendered — pehle Editor me ✓ Approve karo, phir Render"}
+                </span>}
           </div>
         ))}
       </div>

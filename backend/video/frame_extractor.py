@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def extract_frames(video_path: str | Path, out_dir: str | Path,
-                   interval: float = 2.0, scene_times: list[float] | None = None,
+                   interval: float = 3.0, scene_times: list[float] | None = None,
                    save_frames: bool = False) -> list[dict]:
     import cv2  # type: ignore
     import numpy as np  # type: ignore

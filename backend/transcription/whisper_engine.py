@@ -170,7 +170,7 @@ class WhisperEngine:
         """Run one transcription pass and materialize all segments (the
         generator is lazy — CUDA errors surface here, during iteration)."""
         segments_iter, info = model.transcribe(
-            audio_input, language=lang, beam_size=5,
+            audio_input, language=lang, beam_size=3,  # 5→3: ~30% faster on CPU, negligible quality change
             word_timestamps=True, vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 500},
         )
