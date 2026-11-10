@@ -85,6 +85,9 @@ class Settings:
     output_width: int = _i("render", "width", "OUTPUT_WIDTH", 1080)
     output_height: int = _i("render", "height", "OUTPUT_HEIGHT", 1920)
     subtitle_theme: str = str(_get("render", "subtitle_theme", "SUBTITLE_THEME", "dynamic"))
+    # fit = poora frame 9:16 canvas ke andar, khaali jagah blurred bg se bharti
+    # hai (kuch cut nahi hota). crop = full-bleed 9:16 crop (sides kat sakte hain).
+    frame_mode: str = str(_get("render", "frame_mode", "RENDER_FRAME_MODE", "fit"))
     default_language: str = str(os.environ.get("DEFAULT_LANGUAGE", "auto"))
 
     # Scoring weights (spec section 5) — configurable, must sum ~1.0 before penalty

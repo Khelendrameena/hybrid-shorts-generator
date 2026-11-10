@@ -36,6 +36,7 @@ render:
   width: 1080
   height: 1920
   subtitle_theme: "dynamic"   # dynamic | classic | minimal | bold-yellow
+  frame_mode: "fit"           # fit = poora video 9:16 frame ke andar, upar-neeche blurred background (kuch cut nahi hota) | crop = full-bleed 9:16 crop
   normalize_audio: true
   remove_silence: false
 video:
