@@ -12,10 +12,38 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from ..config import settings
 from ..models.manager import model_manager
+
+
+def _decode_audio_ffmpeg(media_path: str | Path):
+    """Decode any media file to 16 kHz mono float32 samples with FFmpeg and
+    return a numpy array.
+
+    Why not let Faster-Whisper decode the file itself? Its internal decoder
+    (PyAV) breaks across PyAV versions — e.g. `av.open(...,
+    metadata_errors="ignore")` raises TypeError on versions whose open()
+    signature lacks that kwarg, which crashed transcription outright
+    (seen 2026-11-10 on av ships-with-faster-whisper in the wild).
+    Passing an ndarray skips PyAV entirely, and FFmpeg is already a hard
+    dependency of this app, so this path is version-proof.
+    """
+    import numpy as np
+
+    cmd = [
+        "ffmpeg", "-v", "error", "-i", str(media_path),
+        "-f", "f32le", "-ac", "1", "-ar", "16000", "-",
+    ]
+    proc = subprocess.run(cmd, capture_output=True)
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError(
+            "ffmpeg audio decode failed: "
+            + proc.stderr.decode("utf-8", "replace")[:300]
+        )
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
 
 
 def _fmt_srt_time(t: float) -> str:
@@ -77,8 +105,15 @@ class WhisperEngine:
         model_manager.acquire("whisper")  # evicts Laya/Ollama from VRAM first
         model = self._load()
         lang = None if (not language or language == "auto") else language
+        # Decode with FFmpeg -> numpy so Faster-Whisper never touches PyAV
+        # (see _decode_audio_ffmpeg). Fall back to the file path only if the
+        # FFmpeg decode itself fails.
+        try:
+            audio_input = _decode_audio_ffmpeg(media_path)
+        except Exception:
+            audio_input = str(media_path)
         segments_iter, info = model.transcribe(
-            str(media_path), language=lang, beam_size=5,
+            audio_input, language=lang, beam_size=5,
             word_timestamps=True, vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 500},
         )
