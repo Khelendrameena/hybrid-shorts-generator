@@ -32,6 +32,20 @@ def test_score_expected_from_distribution():
     assert _score_expected(ans2, ["low", "medium", "high", "very_high"]) == 0.0
 
 
+def test_score_expected_real_laya_format():
+    # Verbatim shape returned by laya 0.4.30 (verified live 2026-11-10):
+    # index-keyed probabilities + float expected index in "score".
+    ans = {"type": "score", "score": 0.9615,
+           "legend": {"0": "low", "1": "medium", "2": "high", "3": "very_high"},
+           "probabilities": {"0": 0.1865, "1": 0.671, "2": 0.1369, "3": 0.0056}}
+    v = _score_expected(ans, ["low", "medium", "high", "very_high"])
+    expected = (0 * 0.1865 + 1 * 0.671 + 2 * 0.1369 + 3 * 0.0056) / 3 * 100
+    assert abs(v - expected) < 0.5
+    # numeric-only fallback: score is the expected index itself
+    assert abs(_score_expected({"score": 3.0}, ["low", "medium", "high", "very_high"]) - 100.0) < 1e-6
+    assert abs(_score_expected({"score": 0.0}, ["low", "medium", "high", "very_high"])) < 1e-6
+
+
 def test_fallback_scores_in_range_and_hooky_beats_flat():
     eng = LayaEngine()
     a = eng.score_candidate(HOOKY)

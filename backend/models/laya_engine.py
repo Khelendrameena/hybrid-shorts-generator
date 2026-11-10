@@ -86,8 +86,12 @@ def _choice_prob(ans: dict, option: str) -> float | None:
 
 
 def _score_expected(ans: dict, levels: list[str]) -> float | None:
-    """Expected level → 0..100. Handles distribution dicts, numeric scores,
-    and string levels — Laya versions differ slightly in field names."""
+    """Expected level → 0..100. Verified against real Laya 0.4.30 output:
+    {"type":"score","score":0.9615,"legend":{"0":"low","1":"medium",...},
+     "probabilities":{"0":0.19,"1":0.67,"2":0.14,"3":0.01}}
+    i.e. probabilities are keyed by INDEX strings and `score` is the expected
+    index as a float in [0, n-1]. Name-keyed distributions (older docs) and
+    string levels are handled too."""
     if not isinstance(ans, dict):
         return None
     probs = ans.get("probabilities") or ans.get("probs") or {}
@@ -95,19 +99,19 @@ def _score_expected(ans: dict, levels: list[str]) -> float | None:
         tot, exp = 0.0, 0.0
         for i, lv in enumerate(levels):
             p = probs.get(lv)
+            if p is None:
+                p = probs.get(str(i))  # real format: index-string keys
+            if p is None:
+                p = probs.get(i)
             if isinstance(p, (int, float)):
                 exp += i * float(p)
                 tot += float(p)
         if tot > 0:
             return exp / tot / max(1, len(levels) - 1) * 100.0
-    for k in ("expected_score", "score", "value"):
+    for k in ("score", "expected_score", "value"):
         v = ans.get(k)
         if isinstance(v, (int, float)):
-            # numeric score is an index (0-based or 1-based) in Laya's schema
-            idx = float(v)
-            if idx >= 1 and idx <= len(levels):
-                idx -= 1 if idx == len(levels) or True else 0
-            return clamp(idx / max(1, len(levels) - 1) * 100.0)
+            return clamp(float(v) / max(1, len(levels) - 1) * 100.0)
         if isinstance(v, str) and v in levels:
             return levels.index(v) / max(1, len(levels) - 1) * 100.0
     return None

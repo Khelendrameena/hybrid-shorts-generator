@@ -109,10 +109,16 @@ config/    default.yaml                docs/LAYA_RESEARCH.md     docs/TROUBLESHO
 
 ```bash
 pip install pytest
-python -m pytest tests/ -q            # 24 unit/integration tests
+python -m pytest tests/ -q            # 25 unit/integration tests
 python scripts/e2e_synthetic.py       # builds a synthetic video and runs the
                                       # whole pipeline incl. a real 1080×1920 render
 ```
+
+**Verified live (2026-11-10):** the real `laya` package (0.4.30) + the real
+multilingual checkpoint were run through this engine on Hindi and English
+samples — see `docs/TEST_RESULTS.md` for the raw typed answers, including a
+live contradiction between Laya's `noul` and `choice` answers that the
+calibration blend is designed to absorb.
 
 Manual test matrix (spec §13): 10-min video · 30-min podcast · 1-hour interview ·
 Hindi video · English video · multi-speaker video. Verify timestamps, clip
