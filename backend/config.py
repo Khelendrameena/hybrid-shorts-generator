@@ -67,6 +67,10 @@ class Settings:
     ollama_timeout: int = _i("ollama", "timeout", "OLLAMA_TIMEOUT", 120)
     ollama_keep_alive: str = str(_get("ollama", "keep_alive", "OLLAMA_KEEP_ALIVE", "0"))
 
+    # Transcript source: auto = YouTube video ke apne captions pehle (seconds me),
+    # na mile to Faster-Whisper. whisper = hamesha Whisper.
+    transcript_source: str = str(_get("transcript", "source", "TRANSCRIPT_SOURCE", "auto"))
+
     # Whisper
     whisper_model: str = str(_get("whisper", "model", "WHISPER_MODEL", "small"))
     whisper_device: str = str(_get("whisper", "device", "WHISPER_DEVICE", "auto"))

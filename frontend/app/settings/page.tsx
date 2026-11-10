@@ -38,6 +38,12 @@ export default function Settings() {
             <option value="minimal">Minimal</option>
             <option value="bold-yellow">Bold yellow</option>
           </select></label>
+        <label className="block text-sm text-white/60">Transcript source — sabse slow stage yahi hai
+          <select value={s.transcript_source || "auto"} onChange={(e) => set("transcript_source", e.target.value)}
+            className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-white">
+            <option value="auto">Auto — YouTube ke apne captions pehle (seconds me), na mile to Whisper</option>
+            <option value="whisper">Whisper hamesha — local AI transcription (slow but captions na ho tab bhi chalega)</option>
+          </select></label>
         <label className="block text-sm text-white/60">Frame mode — Shorts/Reels 9:16 frame me video kaise aaye
           <select value={s.frame_mode || "fit"} onChange={(e) => set("frame_mode", e.target.value)}
             className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-white">
@@ -54,7 +60,7 @@ export default function Settings() {
             ollama_model: s.ollama_model, ollama_url: s.ollama_url, laya_model_id: s.laya_model_id,
             whisper_model: s.whisper_model, max_clips: s.max_clips, min_score: s.min_clip_score,
             min_duration: s.min_clip_duration, max_duration: s.max_clip_duration,
-            subtitle_theme: s.subtitle_theme, frame_mode: s.frame_mode, language: s.default_language,
+            subtitle_theme: s.subtitle_theme, frame_mode: s.frame_mode, transcript_source: s.transcript_source, language: s.default_language,
           }); setMsg("Saved ✓ — applies to the next job."); }}
           className="rounded-xl bg-accent px-5 py-3 font-semibold text-black">Save settings</button>
         {msg && <span className="ml-3 text-sm text-accent">{msg}</span>}

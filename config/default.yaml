@@ -10,6 +10,8 @@ ollama:
   model: "qwen3:4b"
   timeout: 120
   keep_alive: "0"         # unload from VRAM immediately after generation
+transcript:
+  source: "auto"          # auto = YouTube captions pehle (fast), na mile to Whisper | whisper = hamesha Whisper
 whisper:
   model: "small"          # tiny|base|small|medium — small fits RTX 3050 4GB
   device: "auto"

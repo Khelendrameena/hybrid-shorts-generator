@@ -69,19 +69,41 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
             transcript = json.loads(tpath.read_text(encoding="utf-8"))
             progress.update_job(job_id, stage="transcribing", progress=100, message="Transcript restored from checkpoint")
         else:
-            progress.update_job(job_id, stage="transcribing", progress=0, message="Transcribing with Faster-Whisper…")
-            from ..transcription.whisper_engine import WhisperEngine
-
             _t0 = time.perf_counter()
-            transcript = WhisperEngine().transcribe(
-                video_path, pdir, language=opts.get("language") or settings.default_language,
-                progress_cb=_cb(job_id, "transcribing"))
-            _el = time.perf_counter() - _t0
-            print(f"[pipeline] transcribe took {_el:.1f}s (device={transcript.get('device')})", flush=True)
+            # YouTube ke apne captions pehle (seconds me mil jate hain) —
+            # Whisper sirf tab, jab captions na milein ya source local file ho.
+            if (settings.transcript_source != "whisper"
+                    and project["source_type"] == "youtube" and project.get("source_ref")):
+                progress.update_job(job_id, stage="transcribing", progress=5,
+                                    message="YouTube captions check kar raha hoon…")
+                from ..transcription.youtube_captions import fetch_youtube_captions
+
+                transcript = fetch_youtube_captions(
+                    project["source_ref"], pdir,
+                    preferred_language=opts.get("language") or settings.default_language,
+                    progress_cb=_cb(job_id, "transcribing"))
+                if transcript:
+                    _el = time.perf_counter() - _t0
+                    print(f"[pipeline] transcript via YouTube captions in {_el:.1f}s "
+                          f"({transcript.get('caption_kind')}, {transcript.get('caption_lang')})", flush=True)
+                    progress.update_job(job_id, stage="transcribing", progress=100,
+                                        message=f"YouTube captions se transcript mila — {_el:.0f}s me, "
+                                                f"Whisper skip (bahut time bacha)")
+            if transcript is None:
+                progress.update_job(job_id, stage="transcribing", progress=0,
+                                    message="Captions nahi mile — Faster-Whisper se transcribe kar raha hoon…")
+                from ..transcription.whisper_engine import WhisperEngine
+
+                transcript = WhisperEngine().transcribe(
+                    video_path, pdir, language=opts.get("language") or settings.default_language,
+                    progress_cb=_cb(job_id, "transcribing"))
+                _el = time.perf_counter() - _t0
+                print(f"[pipeline] transcribe took {_el:.1f}s (device={transcript.get('device')})", flush=True)
+                progress.update_job(job_id,
+                                    message=f"Transcribed in {_el:.0f}s on {transcript.get('device', 'cpu')}")
             pm.save_transcript_ref(project_id, str(tpath), str(pdir / "transcript.srt"), transcript["language"])
             pm.update_project(project_id, language=transcript["language"])
-            progress.update_job(job_id, checkpoint={"transcript_done": True},
-                                message=f"Transcribed in {_el:.0f}s on {transcript.get('device', 'cpu')}")
+            progress.update_job(job_id, checkpoint={"transcript_done": True})
 
         # ---- video understanding -------------------------------------------
         analysis_path = pdir / "analysis.json"

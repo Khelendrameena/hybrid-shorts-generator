@@ -48,6 +48,7 @@ class SettingsIn(BaseModel):
     max_duration: float | None = None
     subtitle_theme: str | None = None
     frame_mode: str | None = None
+    transcript_source: str | None = None
     language: str | None = None
 
 
@@ -94,6 +95,8 @@ def update_settings(body: SettingsIn):
     if body.frame_mode:
         from ..rendering.ffmpeg_engine import resolve_mode
         settings.frame_mode = resolve_mode(body.frame_mode)
+    if body.transcript_source in ("auto", "whisper"):
+        settings.transcript_source = body.transcript_source
     if body.language:
         settings.default_language = body.language
     return settings.as_dict()

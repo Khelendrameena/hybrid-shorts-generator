@@ -45,7 +45,8 @@ Hugging Face, Faster-Whisper `small` ≈0.5 GB. No accounts, no API keys, no Gem
 ```
 YouTube URL / local file
   → yt-dlp / upload  → ffprobe metadata check
-  → Faster-Whisper transcription (word + segment timestamps, JSON + SRT saved)
+  → Transcript: YouTube ke apne captions pehle (manual > auto, seconds me — Whisper skip);
+    captions na milein ya local file ho to Faster-Whisper (word + segment timestamps, JSON + SRT saved)
   → Video understanding: scenes (PySceneDetect), frames (1/2s + around cuts),
     face tracking (OpenCV), per-second audio energy, black-frame flags
   → Candidate windows: overlapping, sentence-bounded, grown from every segment
