@@ -2,31 +2,36 @@
 
 Architecture simple hai:
 
-- **Cloud dashboard** (`cloud/app.py`) — Render par 24×7 online, password-protected.
-  Yahan sirf queue, mode (Auto/Manual) aur settings rehte hain. Koi heavy kaam nahi hota.
-- **Laptop worker** (`worker.py`) — jab laptop ON hota hai to ye cloud se jobs uthata hai,
-  local backend khud start karta hai, pipeline chalata hai, best clips render karke
-  YouTube par upload karta hai, aur result links dashboard me bhej deta hai.
-- **Laptop OFF** = jobs cloud queue me safe pade rehte hain. Laptop on hote hi worker
-  wahin se resume kar leta hai. Kuch delete nahi hota.
+- **Cloud dashboard** (`cloud-vercel/` — Next.js) — Vercel par online, password-protected,
+  **kabhi soti nahi** (serverless — Render wali 15-min sleep problem hi nahi).
+  Yahan sirf queue, mode (Auto/Manual) aur settings rehte hain; data **Neon Postgres**
+  me rehta hai. Koi heavy kaam yahan nahi hota.
+- **Laptop worker** (`worker.py`) — jab laptop ON hota hai to ye cloud ke JSON API se
+  jobs + settings (mode: auto/manual, sab config) leta hai, local backend khud start
+  karta hai, pipeline chalata hai, best clips render karke YouTube par upload karta hai,
+  aur result links dashboard me bhej deta hai.
+- **Laptop OFF** = jobs cloud queue (Neon DB) me safe pade rehte hain. Laptop on hote
+  hi worker wahin se resume kar leta hai. Kuch delete nahi hota.
 
-## 1. Cloud dashboard deploy (Render, free)
+> Purana Render version (`cloud/app.py`) bhi repo me hai backup ke roop me — dono ka
+> API aur password/token system ek hi hai, worker.py dono par bina badle chalta hai.
 
-1. render.com → **New → Web Service** → repo `hybrid-shorts-generator` connect karo.
-2. Settings:
-   - **Build Command:** `pip install -r cloud/requirements.txt`
-   - **Start Command:** `python -m uvicorn cloud.app:app --host 0.0.0.0 --port $PORT`
-   - **Instance type:** Free
-3. **Environment variables:**
-   - `DASHBOARD_PASSWORD` = apna strong password (dashboard login + worker dono ke liye yahi)
-   - `DATABASE_URL` = (recommended) Neon free Postgres ka connection string —
-     bina iske queue Render ke temporary disk par rehti hai aur redeploy/restart par
-     reset ho sakti hai. Neon: neon.tech → free project → connection string copy → yahan paste.
-4. Deploy → jo URL mile (e.g. `https://hybrid-shorts-cloud.onrender.com`) wahi tumhari site hai.
-   Phone se kholo, password daalo — bas.
+## 1. Cloud dashboard deploy (Vercel + Neon, free)
 
-> Render free service 15 min idle par so jaati hai; pehli baar kholne par ~30–50 sec
-> lag sakte hain. Worker iske liye bana hai — wo retry karta rehta hai.
+**Pehle Neon DB (2 min):**
+1. neon.tech → login (tumhara account pehle se hai) → **New Project** → naam `shorts-cloud`.
+2. Project khulte hi **Connection string** dikhega — **Pooled connection** wala copy karo
+   (`...-pooler...` wala). Ye string kisi ko bhejna nahi hai, seedha Vercel me paste hogi.
+
+**Phir Vercel import (2 min):**
+1. vercel.com → **Add New → Project** → repo `hybrid-shorts-generator` **Import**.
+2. **Root Directory:** `cloud-vercel` select karo. Framework: Next.js (auto-detect hoga).
+3. **Environment Variables** me do cheezein daalo:
+   - `DASHBOARD_PASSWORD` = wahi password jo Render wale dashboard ka tha
+     (worker ke liye bhi yahi chalega — kuch badalna nahi)
+   - `DATABASE_URL` = Neon wali pooled connection string
+4. **Deploy** → jo URL mile (e.g. `https://hybrid-shorts-cloud.vercel.app`) wahi site hai.
+   Phone se kholo, password daalo — bas. Sleep problem khatam, hamesha turant khulegi.
 
 ## 2. Laptop worker start
 
@@ -35,7 +40,7 @@ WSL me, project folder me:
 ```bash
 git pull
 pip install -r requirements.txt        # YouTube upload wali libs ke liye
-CLOUD_URL=https://<tumhara-render-url> DASHBOARD_PASSWORD=<wahi password> bash run-worker.sh
+CLOUD_URL=https://<tumhara-vercel-url> DASHBOARD_PASSWORD=<wahi password> bash run-worker.sh
 ```
 
 Worker khud:
