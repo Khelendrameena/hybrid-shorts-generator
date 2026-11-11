@@ -87,6 +87,10 @@ class Cloud:
         return http_json("POST", self.base + "/api/worker/discover",
                          {"videos": videos}, self.h, timeout=90)
 
+    def pending_uploads(self):
+        return http_json("GET", self.base + "/api/worker/uploads/pending",
+                         None, self.h, timeout=60)
+
     def report(self, job_id, **fields):
         fields["job_id"] = job_id
         try:
@@ -100,8 +104,16 @@ class Cloud:
 # ------------------------------------------------------------- local backend
 
 def local_alive() -> bool:
+    """Sirf ye check karo ki server port 8000 par jawab de raha hai.
+    /api/health KABHI health-check ke liye use mat karo — wo endpoint
+    Laya/Ollama engines construct karta hai, seconds-minutes le sakta
+    hai; worker wahi atka raha tha. Root endpoint static hai, turant
+    jawab deta hai. Koi bhi HTTP response (404/500 bhi) = server zinda."""
     try:
-        http_json("GET", LOCAL_API + "/health", timeout=3)
+        req = urllib.request.Request("http://127.0.0.1:8000/")
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except urllib.error.HTTPError:
         return True
     except Exception:
         return False
@@ -335,24 +347,118 @@ def process_job(cloud: Cloud, job: dict, settings: dict) -> list[dict]:
         with open(path, "wb") as f:
             f.write(data)
         entry = {"title": c.get("title") or "Short", "file": name,
-                 "score": c.get("score"), "youtube_url": ""}
+                 "score": c.get("score"), "youtube_url": "",
+                 "upload_status": "none", "uploaded_at": 0}
         if do_upload:
-            cloud.report(job["id"], status="processing", stage="upload",
-                         message=f"YouTube upload: {entry['title'][:60]}")
-            try:
-                from backend.upload.youtube import is_configured, upload_video
-                if is_configured():
-                    entry["youtube_url"] = upload_video(
-                        path, entry["title"],
-                        (c.get("description") or "") + "\n#Shorts",
-                        privacy_status=privacy)
-                else:
-                    entry["note"] = ("YouTube upload setup nahi hai "
-                                     "(scripts/youtube_auth.py चलाना बाकी)")
-            except Exception as exc:
-                entry["note"] = f"upload failed: {exc}"
+            if settings.get("upload_schedule_enabled") == "1":
+                # Schedule ON: abhi upload nahi — scheduler set time
+                # par ek-ek karke uthayega (daily limit ke andar).
+                entry["upload_status"] = "pending"
+            else:
+                cloud.report(job["id"], status="processing", stage="upload",
+                             message=f"YouTube upload: {entry['title'][:60]}")
+                try:
+                    from backend.upload.youtube import is_configured, upload_video
+                    if is_configured():
+                        entry["youtube_url"] = upload_video(
+                            path, entry["title"],
+                            (c.get("description") or "") + "\n#Shorts",
+                            privacy_status=privacy)
+                        entry["upload_status"] = "uploaded"
+                        entry["uploaded_at"] = time.time()
+                    else:
+                        entry["upload_status"] = "pending"
+                        entry["note"] = ("YouTube upload setup nahi hai "
+                                         "(scripts/youtube_auth.py चलाना बाकी) — "
+                                         "setup hote hi upload ho jayegi")
+                except Exception as exc:
+                    entry["upload_status"] = "pending"
+                    entry["note"] = f"upload failed (pending me rakha hai): {exc}"
         results.append(entry)
     return results
+
+
+# ------------------------------------------------------------- upload scheduler
+
+_sched_lock = threading.Lock()
+
+
+def _parse_times(s: str) -> list[tuple[int, int]]:
+    out = []
+    for part in (s or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            h, m = part.split(":")
+            out.append((int(h) % 24, int(m) % 60))
+        except Exception:
+            continue
+    return sorted(out)
+
+
+def run_upload_scheduler(cloud: Cloud, settings: dict):
+    """Schedule ON ho to pending clips ko set time par, daily limit ke
+    andar, ek-ek karke YouTube par upload karta hai. Kab kaunsi clip
+    jayegi ye cloud ke data se decide hota hai (aaj kitne upload hue),
+    isliye worker restart ho jaye to bhi schedule gadbad nahi hota."""
+    if settings.get("upload_schedule_enabled") != "1":
+        return
+    if not _sched_lock.acquire(blocking=False):
+        return
+    try:
+        from backend.upload.youtube import is_configured, upload_video
+        if not is_configured():
+            return  # token setup baki — clips pending hi rahenge
+        data = cloud.pending_uploads()
+        pending = data.get("pending") or []
+        if not pending:
+            return
+        limit = int(settings.get("daily_upload_limit", "3") or 3)
+        done_today = int(data.get("uploaded_today", 0))
+        if done_today >= limit:
+            return
+        slots = _parse_times(settings.get("upload_times", "")) or [(12, 0)]
+        now = time.localtime()
+        due_h, due_m = slots[min(done_today, len(slots) - 1)]
+        if (now.tm_hour, now.tm_min) < (due_h, due_m):
+            return  # abhi time nahi hua
+        item = pending[0]
+        # NOTE: item["clip"] aur job_clips ke andar wali copy JSON ke
+        # baad alag objects hoti hain — hamesha job_clips wali entry ko
+        # hi mutate karo, warna status cloud tak kabhi nahi pahunchega
+        # aur clip baar-baar upload hoti rahegi.
+        job_clips = item.get("job_clips") or [item["clip"]]
+        target = None
+        for c in job_clips:
+            if (c.get("upload_status") == "pending"
+                    and c.get("file") == item["clip"].get("file")):
+                target = c
+                break
+        clip = target or item["clip"]
+        if target is None:
+            job_clips = [clip]
+        path = os.path.join(OUT_DIR, clip.get("file", ""))
+        if not os.path.exists(path):
+            clip["upload_status"] = "missing"
+            clip["note"] = "file laptop par nahi mili (cloud_outputs se hati?)"
+            cloud.report(item["job_id"], clips=job_clips)
+            print(f"Scheduler: clip file missing — {clip.get('title')}")
+            return
+        print(f"Scheduler: upload kar raha hu — {clip.get('title', '')[:60]}")
+        url = upload_video(path, clip.get("title") or "Short", "",
+                           privacy_status=settings.get(
+                               "upload_privacy", "unlisted"))
+        clip["youtube_url"] = url
+        clip["upload_status"] = "uploaded"
+        clip["uploaded_at"] = time.time()
+        clip.pop("note", None)
+        cloud.report(item["job_id"], clips=job_clips)
+        print(f"Scheduler: uploaded ✓ {url} (aaj ke {done_today + 1}/{limit})")
+    except Exception as exc:
+        print(f"[scheduler error: {exc}]")
+    finally:
+        _sched_lock.release()
 
 
 def process_simulated(cloud: Cloud, job: dict) -> list[dict]:
@@ -398,6 +504,14 @@ def main():
             time.sleep(30)
 
     threading.Thread(target=heartbeat_loop, daemon=True).start()
+
+    def scheduler_loop():
+        while not _stop:
+            if not args.simulate:
+                run_upload_scheduler(cloud, settings)
+            time.sleep(60)
+
+    threading.Thread(target=scheduler_loop, daemon=True).start()
 
     while not _stop:
         try:

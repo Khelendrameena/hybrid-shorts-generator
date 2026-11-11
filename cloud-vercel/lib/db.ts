@@ -87,6 +87,9 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   upload_privacy: "unlisted",
   min_duration: "240",
   daily_auto_cap: "5",
+  upload_schedule_enabled: "0",
+  upload_times: "10:00,15:00,20:00",
+  daily_upload_limit: "3",
 };
 
 let _initPromise: Promise<void> | null = null;

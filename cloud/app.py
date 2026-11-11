@@ -66,6 +66,9 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "upload_privacy": "unlisted",
     "min_duration": "240",
     "daily_auto_cap": "5",
+    "upload_schedule_enabled": "0",
+    "upload_times": "10:00,15:00,20:00",
+    "daily_upload_limit": "3",
 }
 
 # --------------------------------------------------------------------------
@@ -417,6 +420,31 @@ async def discover(request: Request):
     return {"enqueued": enqueued}
 
 
+@app.get("/api/worker/uploads/pending")
+def uploads_pending(request: Request):
+    """Render ho chuki clips jo scheduled upload ka wait kar rahi hain,
+    + aaj kitni upload ho chuki (daily limit ke liye)."""
+    _need_worker(request)
+    pending = []
+    uploaded_today = 0
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    with _lock, db() as d:
+        rows = d.fetchall("SELECT * FROM jobs ORDER BY created_at ASC")
+    for r in rows:
+        try:
+            clips = json.loads(r.get("clips") or "[]")
+        except Exception:
+            clips = []
+        for c in clips:
+            if c.get("upload_status") == "pending":
+                pending.append({"job_id": r["id"], "job_title": r.get("title"),
+                                "clip": c, "job_clips": clips})
+            ua = c.get("uploaded_at")
+            if ua and time.strftime("%Y-%m-%d", time.gmtime(ua)) == today:
+                uploaded_today += 1
+    return {"pending": pending, "uploaded_today": uploaded_today}
+
+
 @app.post("/api/worker/report")
 async def report(request: Request):
     _need_worker(request)
@@ -478,6 +506,15 @@ trending long videos khud dhoondhe, clips banaye, YouTube par upload kare</label
 <option value="public">public</option><option value="private">private</option></select></div>
 </div>
 <button onclick="saveSettings()">Settings save karo</button> <small id="saved"></small>
+<div style="border-top:1px solid #232b3f;margin-top:12px;padding-top:10px">
+<label><input type="checkbox" class="switch" id="upload_schedule_enabled"> <b>📅 Upload schedule</b> —
+bani hui clips turant nahi, set time par upload hon</label>
+<div class="row" style="margin-top:8px">
+<div><label>Upload times (har time par 1 clip)</label><input id="upload_times" placeholder="10:00,15:00,20:00"></div>
+<div><label>Roz kitni uploads (limit)</label><input id="daily_upload_limit" type="number" min="1" max="20"></div>
+</div>
+<small>YouTube API free quota roz ~6 uploads hai. Laptop us time on hona chahiye,
+warna on hote hi due uploads ek-ek karke jayengi.</small></div>
 </div>
 
 <div class="card"><h3>✋ Manual mode — video add karo</h3>
@@ -500,7 +537,9 @@ async function refresh(){
    $('auto_enabled').checked=st.auto_enabled==='1'; $('niches').value=st.niches||'';
    $('channels').value=st.channels||''; $('clips_per_video').value=st.clips_per_video;
    $('min_duration').value=st.min_duration; $('daily_auto_cap').value=st.daily_auto_cap;
-   $('upload_privacy').value=st.upload_privacy;}
+   $('upload_privacy').value=st.upload_privacy;
+   $('upload_schedule_enabled').checked=st.upload_schedule_enabled==='1';
+   $('upload_times').value=st.upload_times||''; $('daily_upload_limit').value=st.daily_upload_limit;}
  const chip={queued:'<span class="chip q">QUEUED</span>',claimed:'<span class="chip p">CLAIMED</span>',
   processing:'<span class="chip p">PROCESSING</span>',done:'<span class="chip d">DONE</span>',
   failed:'<span class="chip f">FAILED</span>',cancelled:'<span class="chip c">CANCELLED</span>'};
@@ -508,7 +547,7 @@ async function refresh(){
   ${chip[j.status]||j.status} <b>${j.kind==='auto'?'🤖 AUTO':'✋ MANUAL'}</b>
   <a href="${j.source_url}" target="_blank">${(j.title||j.source_url).slice(0,80)}</a><br>
   <small>${j.stage||''} ${j.message?'— '+j.message:''}</small>
-  ${(j.clips||[]).map(c=>`<br>🎬 ${c.title||'clip'} ${c.youtube_url?`— <a href="${c.youtube_url}" target="_blank">YouTube par dekho</a>`:''}`).join('')}
+  ${(j.clips||[]).map(c=>`<br>🎬 ${c.title||'clip'} ${c.youtube_url?`— <a href="${c.youtube_url}" target="_blank">YouTube par dekho</a>`:c.upload_status==='pending'?'— ⏳ upload scheduled':''}`).join('')}
   <br><button class="sm ghost" onclick="act('${j.id}','retry')">Retry</button>
   <button class="sm ghost" onclick="act('${j.id}','cancel')">Cancel</button>
   <button class="sm ghost" onclick="act('${j.id}','delete')">Delete</button></div>`).join('')
@@ -518,7 +557,9 @@ async function saveSettings(){
  await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
   auto_enabled:$('auto_enabled').checked?'1':'0',niches:$('niches').value,channels:$('channels').value,
   clips_per_video:$('clips_per_video').value,min_duration:$('min_duration').value,
-  daily_auto_cap:$('daily_auto_cap').value,upload_privacy:$('upload_privacy').value})});
+  daily_auto_cap:$('daily_auto_cap').value,upload_privacy:$('upload_privacy').value,
+  upload_schedule_enabled:$('upload_schedule_enabled').checked?'1':'0',
+  upload_times:$('upload_times').value,daily_upload_limit:$('daily_upload_limit').value})});
  $('saved').textContent='Saved ✓'; setTimeout(()=>$('saved').textContent='',2000);}
 async function addJob(){
  const url=$('murl').value.trim(); if(!url)return alert('URL daalo pehle');

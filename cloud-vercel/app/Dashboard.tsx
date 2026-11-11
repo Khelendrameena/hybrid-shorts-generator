@@ -40,7 +40,11 @@ export default function Dashboard() {
   async function saveSettings() {
     await fetch("/api/settings", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, auto_enabled: form.auto_enabled ? "1" : "0" }),
+      body: JSON.stringify({
+        ...form,
+        auto_enabled: form.auto_enabled ? "1" : "0",
+        upload_schedule_enabled: form.upload_schedule_enabled ? "1" : "0",
+      }),
     });
     setSaved("Saved ✓");
     setTimeout(() => setSaved(""), 2000);
@@ -139,6 +143,32 @@ export default function Dashboard() {
         </div>
         <button style={btn} onClick={saveSettings}>Settings save karo</button>{" "}
         <small>{saved}</small>
+        <div style={{ borderTop: "1px solid #232b3f", marginTop: 14, paddingTop: 12 }}
+          onFocus={() => (editing.current = true)} onBlur={() => (editing.current = false)}>
+          <label>
+            <input type="checkbox" checked={!!form?.upload_schedule_enabled && form.upload_schedule_enabled !== "0"}
+              onChange={(e) => setForm({ ...form, upload_schedule_enabled: e.target.checked })}
+              style={{ transform: "scale(1.4)", marginRight: 10, verticalAlign: "middle" }} />
+            <b>📅 Upload schedule</b> — bani hui clips turant nahi, set time par upload hon
+          </label>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+            <div style={{ flex: 2, minWidth: 200 }}>
+              <label style={{ fontSize: 13 }}>Upload times (comma se, 24h format — har time par 1 clip)</label>
+              <input style={input} placeholder="10:00,15:00,20:00" value={form?.upload_times || ""}
+                onChange={(e) => setForm({ ...form, upload_times: e.target.value })} />
+            </div>
+            <div style={{ flex: 1, minWidth: 130 }}>
+              <label style={{ fontSize: 13 }}>Roz kitni uploads (limit)</label>
+              <input type="number" min={1} max={20} style={input} value={form?.daily_upload_limit || ""}
+                onChange={(e) => setForm({ ...form, daily_upload_limit: e.target.value })} />
+            </div>
+          </div>
+          <small style={{ color: "#8b93a7" }}>
+            Note: YouTube API ki free quota roz ~6 uploads ki hai — limit usse zyada rakhne par
+            baaki clips agle din jayengi. Laptop us time par on hona chahiye, warna worker
+            on hote hi due uploads ek-ek karke bhej dega.
+          </small>
+        </div>
       </div>
 
       <div style={card}>
@@ -175,9 +205,16 @@ export default function Dashboard() {
                 <small style={{ color: "#8b93a7" }}>
                   {j.stage} {j.message ? "— " + j.message : ""}
                 </small>
-                {(j.clips || []).map((c, i) => (
+                {(j.clips || []).map((c: any, i: number) => (
                   <div key={i}>🎬 {c.title || "clip"}{" "}
-                    {c.youtube_url && <>— <a href={c.youtube_url} target="_blank" style={{ color: "#9ec1ff" }}>YouTube par dekho</a></>}
+                    {c.youtube_url
+                      ? <>— <a href={c.youtube_url} target="_blank" style={{ color: "#9ec1ff" }}>YouTube par dekho</a></>
+                      : c.upload_status === "pending"
+                        ? <span style={{ color: "#d7e08a" }}>⏳ upload scheduled</span>
+                        : c.upload_status === "missing"
+                          ? <span style={{ color: "#ff9e9e" }}>⚠ file missing</span>
+                          : null}
+                    {c.note ? <><br /><small style={{ color: "#8b93a7" }}>{c.note}</small></> : null}
                   </div>
                 ))}
                 <div style={{ marginTop: 4 }}>
