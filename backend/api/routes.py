@@ -49,6 +49,7 @@ class SettingsIn(BaseModel):
     subtitle_theme: str | None = None
     frame_mode: str | None = None
     transcript_source: str | None = None
+    caption_language: str | None = None
     language: str | None = None
 
 
@@ -97,6 +98,8 @@ def update_settings(body: SettingsIn):
         settings.frame_mode = resolve_mode(body.frame_mode)
     if body.transcript_source in ("auto", "whisper"):
         settings.transcript_source = body.transcript_source
+    if body.caption_language in ("auto", "hindi", "english", "hinglish"):
+        settings.caption_language = body.caption_language
     if body.language:
         settings.default_language = body.language
     return settings.as_dict()
@@ -217,7 +220,10 @@ def regenerate_clip(cid: str):
     if not row:
         raise HTTPException(404, "Clip not found")
     clip = {"id": cid, "transcript": row["transcript"], "category": row["category"], "score": row["score"]}
-    md = OllamaEngine().generate_metadata(clip)
+    from ..generation.caption_translator import metadata_language
+
+    md = OllamaEngine().generate_metadata(
+        clip, language=metadata_language(settings.caption_language) or settings.default_language)
     pm.update_clip(cid, metadata=md)
     return md
 
@@ -271,9 +277,16 @@ def export_zip(pid: str):
 
         t = load_transcript(pdir)
         if t:
+            # Caption language चुनी गई हो और उसका translation cache मौजूद हो
+            # तो SRT भी उसी भाषा में — वरना original transcript.
+            _segs = t["segments"]
+            _cap = (settings.caption_language or "auto").strip().lower()
+            _cache = pdir / f"captions_{_cap}.json"
+            if _cap != "auto" and _cache.exists():
+                _segs = json.loads(_cache.read_text(encoding="utf-8"))
             for c in clips:
                 z.writestr(f"srt/{c.get('display_id') or c['id']}.srt",
-                           export_srt_for_clip(t["segments"], c["start"], c["end"]))
+                           export_srt_for_clip(_segs, c["start"], c["end"]))
             z.write(pdir / "transcript.srt", "transcript.srt")
             z.write(pdir / "transcript.json", "transcript.json")
     buf.seek(0)

@@ -174,8 +174,14 @@ def run_pipeline(job_id: str, project_id: str, opts: dict | None = None) -> None
                 # keep_alive="5m": keep the model loaded across clips in this
                 # stage (reload per clip cost 10-20s each); queue unloads it
                 # once at stage end via ollama.unload().
-                md = ollama.generate_metadata(c, language=opts.get("language") or settings.default_language,
-                                              keep_alive="5m")
+                # Short ki text language: user's caption-language setting wins
+                # over the speech-recognition language when set (title/hook/
+                # description usi bhasha me jayenge jo captions ki hai).
+                from ..generation.caption_translator import metadata_language
+
+                _md_lang = (opts.get("language") or metadata_language(settings.caption_language)
+                            or settings.default_language)
+                md = ollama.generate_metadata(c, language=_md_lang, keep_alive="5m")
                 c["metadata"] = md
                 if str(md.get("source", "")).startswith("ollama"):
                     _via_ollama += 1
@@ -230,6 +236,24 @@ def render_all_approved(job_id: str, project_id: str) -> None:
         progress.update_job(job_id, stage="failed",
                             error="Koi approved clip nahi hai — pehle Editor me clip ko ✓ Approve karo, phir Render dabao.")
         return
+    # Caption language: user ne alag bhasha chuni ho to captions usi me
+    # translate honge (Ollama, ek baar karke cache) — warna original.
+    segments = transcript["segments"]
+    _cap_target = (settings.caption_language or "auto").strip().lower()
+    if _cap_target != "auto":
+        from ..generation.caption_translator import needs_translation, translate_segments
+
+        if needs_translation(segments, transcript.get("language"), _cap_target):
+            cache = pdir / f"captions_{_cap_target}.json"
+            if cache.exists():
+                segments = json.loads(cache.read_text(encoding="utf-8"))
+            else:
+                progress.update_job(job_id, stage="rendering", progress=0,
+                                    message=f"Captions {_cap_target} me translate ho rahe hain (Ollama)…")
+                segments, _note = translate_segments(segments, _cap_target)
+                if segments is not transcript["segments"]:
+                    cache.write_text(json.dumps(segments, ensure_ascii=False), encoding="utf-8")
+                progress.update_job(job_id, stage="rendering", progress=0, message=_note)
     total = max(1, len(clips))
     try:
         for i, c in enumerate(clips):
@@ -238,7 +262,7 @@ def render_all_approved(job_id: str, project_id: str) -> None:
             cx, cy, _ = dominant_face_center(analysis.get("face_track") or [], c["start"], c["end"])
             out = pdir / "renders" / f"{c.get('display_id') or c['id']}.mp4"
             theme = (c.get("metadata") or {}).get("caption_style") or settings.subtitle_theme
-            render_clip(project["video_path"], c["start"], c["end"], transcript["segments"],
+            render_clip(project["video_path"], c["start"], c["end"], segments,
                         out, theme=theme, face_center=(cx, cy),
                         src_w=vmeta.get("width"), src_h=vmeta.get("height"))
             pm.update_clip(c["id"], status="rendered", output_path=str(out))

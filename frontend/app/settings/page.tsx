@@ -38,6 +38,15 @@ export default function Settings() {
             <option value="minimal">Minimal</option>
             <option value="bold-yellow">Bold yellow</option>
           </select></label>
+        <label className="block text-sm text-white/60">Caption + Short ki language — subtitles aur title/hook kis bhasha me jayein
+          <select value={s.caption_language || "auto"} onChange={(e) => set("caption_language", e.target.value)}
+            className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-white">
+            <option value="auto">Auto — video ki asli bhasha (jaise boli gayi hai)</option>
+            <option value="hindi">Hindi — देवनागरी script me</option>
+            <option value="english">English</option>
+            <option value="hinglish">Hinglish — Hindi, Roman letters me (jaise chat karte hain)</option>
+          </select>
+          <span className="mt-1 block text-xs text-white/40">Video ki bhasha se alag bhasha chuni to captions Ollama se local translate honge — thoda extra time lagega, koi paid API nahi lagegi.</span></label>
         <label className="block text-sm text-white/60">Transcript source — sabse slow stage yahi hai
           <select value={s.transcript_source || "auto"} onChange={(e) => set("transcript_source", e.target.value)}
             className="mt-1 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-white">
@@ -60,7 +69,7 @@ export default function Settings() {
             ollama_model: s.ollama_model, ollama_url: s.ollama_url, laya_model_id: s.laya_model_id,
             whisper_model: s.whisper_model, max_clips: s.max_clips, min_score: s.min_clip_score,
             min_duration: s.min_clip_duration, max_duration: s.max_clip_duration,
-            subtitle_theme: s.subtitle_theme, frame_mode: s.frame_mode, transcript_source: s.transcript_source, language: s.default_language,
+            subtitle_theme: s.subtitle_theme, frame_mode: s.frame_mode, transcript_source: s.transcript_source, caption_language: s.caption_language, language: s.default_language,
           }); setMsg("Saved ✓ — applies to the next job."); }}
           className="rounded-xl bg-accent px-5 py-3 font-semibold text-black">Save settings</button>
         {msg && <span className="ml-3 text-sm text-accent">{msg}</span>}

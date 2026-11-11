@@ -92,6 +92,9 @@ class Settings:
     # fit = poora frame 9:16 canvas ke andar, khaali jagah blurred bg se bharti
     # hai (kuch cut nahi hota). crop = full-bleed 9:16 crop (sides kat sakte hain).
     frame_mode: str = str(_get("render", "frame_mode", "RENDER_FRAME_MODE", "fit"))
+    # Captions + Short ki text (title/hook) kis bhasha me jayein:
+    # auto (video ki asli bhasha) | hindi (Devanagari) | english | hinglish (Roman)
+    caption_language: str = str(_get("render", "caption_language", "CAPTION_LANGUAGE", "auto"))
     default_language: str = str(os.environ.get("DEFAULT_LANGUAGE", "auto"))
 
     # Scoring weights (spec section 5) — configurable, must sum ~1.0 before penalty
