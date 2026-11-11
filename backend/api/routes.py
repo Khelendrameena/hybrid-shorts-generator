@@ -243,6 +243,26 @@ def upload_clip(cid: str):
         raise HTTPException(404, "Clip not found")
     if not row.get("output_path") or not Path(row["output_path"]).exists():
         raise HTTPException(400, "Pehle is clip ko render karo — rendered file nahi mili")
+    # Shorts format ki pakki check: YouTube ke paas alag "Shorts upload"
+    # hota hi nahi — wahi normal upload hai, aur YouTube khud decide
+    # karta hai: vertical (9:16) + 3 minute se chhoti video = Short,
+    # warna normal Video. Galat format yahin rok do, taaki koi clip
+    # galti se normal video na ban jaye.
+    from ..video.metadata import probe
+    info = probe(row["output_path"])
+    if info.get("valid"):
+        _w = info.get("width") or 0
+        _h = info.get("height") or 0
+        _dur = info.get("duration") or 0
+        if _h < _w:
+            raise HTTPException(
+                400, f"Ye clip vertical nahi hai ({_w}x{_h}) — Shorts ke "
+                     "liye 9:16 vertical render chahiye")
+        if _dur > 180:
+            raise HTTPException(
+                400, f"Ye clip {_dur:.0f} second lambi hai — 3 minute "
+                     "(180s) se lambi video Shorts nahi banti. Editor me "
+                     "End time kam karke dobara render karo")
     md = db.loads(row.get("metadata"), {})
     up = md.get("upload") or {}
     if up.get("status") == "uploaded" and up.get("youtube_url"):
