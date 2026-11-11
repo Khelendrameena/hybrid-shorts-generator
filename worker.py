@@ -105,13 +105,26 @@ def local_alive() -> bool:
         return False
 
 
+def _tail(path: str, chars: int = 2500) -> str:
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - chars))
+            return f.read().decode("utf-8", "replace")
+    except Exception:
+        return "(log nahi mila)"
+
+
 def ensure_local_backend():
     """Start the local FastAPI backend (and Ollama if present) when down,
-    so 'laptop on = sab apne aap chalu'."""
+    so 'laptop on = sab apne aap chalu'. Heavy model imports can take a
+    while on first start — wait up to 120s before giving up."""
     if local_alive():
         return True
     print("Local backend down hai — start kar raha hu...")
-    log = open(os.path.join(ROOT, "worker-backend.log"), "ab")
+    log_path = os.path.join(ROOT, "worker-backend.log")
+    log = open(log_path, "ab")
     subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "backend.main:app",
          "--host", "127.0.0.1", "--port", "8000"],
@@ -122,12 +135,53 @@ def ensure_local_backend():
         except Exception:
             subprocess.Popen(["ollama", "serve"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(30):
+    for _ in range(60):
         if local_alive():
             print("Local backend up ✓")
             return True
         time.sleep(2)
-    print("WARNING: local backend start nahi hua — worker-backend.log dekho")
+    print("WARNING: local backend start nahi hua. Log ki aakhri lines:")
+    print("-" * 60)
+    print(_tail(log_path))
+    print("-" * 60)
+    return False
+
+
+def frontend_alive() -> bool:
+    try:
+        req = urllib.request.Request("http://127.0.0.1:3000")
+        urllib.request.urlopen(req, timeout=3)
+        return True
+    except urllib.error.HTTPError:
+        return True  # koi HTTP response aaya = server zinda hai
+    except Exception:
+        return False
+
+
+def ensure_frontend():
+    """Start the local Next.js dashboard (localhost:3000) so processing
+    status local UI me bhi dikhe. Non-fatal: na chale to worker ka
+    kaam nahi rukta."""
+    if frontend_alive():
+        return True
+    fe_dir = os.path.join(ROOT, "frontend")
+    if not os.path.isdir(fe_dir):
+        return False
+    print("Local dashboard (frontend) start kar raha hu — localhost:3000 ...")
+    log = open(os.path.join(ROOT, "worker-frontend.log"), "ab")
+    built = os.path.exists(os.path.join(fe_dir, ".next", "BUILD_ID"))
+    cmd = ["npm", "run", "start"] if built else ["npm", "run", "dev"]
+    try:
+        subprocess.Popen(cmd, cwd=fe_dir, stdout=log, stderr=log)
+    except Exception as exc:
+        print(f"Frontend start nahi hua ({exc}) — cloud dashboard se kaam chalega")
+        return False
+    for _ in range(20):
+        if frontend_alive():
+            print("Local dashboard up ✓  →  http://localhost:3000")
+            return True
+        time.sleep(2)
+    print("Frontend abhi tak up nahi — worker-frontend.log dekho (kaam nahi rukega)")
     return False
 
 
@@ -330,11 +384,19 @@ def main():
             time.sleep(30)
 
     threading.Thread(target=heartbeat_loop, daemon=True).start()
-    if not args.simulate:
-        ensure_local_backend()
 
     while not _stop:
         try:
+            # Backend pehle up karo — down ho to job claim hi mat karo,
+            # warna achhe jobs bina wajah FAILED mark ho jayenge.
+            if not args.simulate:
+                if not ensure_local_backend():
+                    print("Backend up nahi hua — 60s ruk kar phir try karunga "
+                          "(koi job claim nahi hoga, queue safe hai)")
+                    time.sleep(60)
+                    continue
+                ensure_frontend()
+
             # auto discovery (only when auto mode ON in the dashboard)
             if (settings.get("auto_enabled") == "1"
                     and time.time() - last_discovery > DISCOVERY_EVERY_MIN * 60):
@@ -355,8 +417,8 @@ def main():
                 if args.simulate:
                     clips = process_simulated(cloud, job)
                 else:
-                    if not ensure_local_backend():
-                        raise RuntimeError("local backend start nahi hua")
+                    if not local_alive():
+                        raise RuntimeError("local backend beech me band ho gaya")
                     clips = process_job(cloud, job, settings)
                 uploaded = sum(1 for c in clips if c.get("youtube_url"))
                 cloud.report(job["id"], status="done", stage="done",
@@ -367,9 +429,16 @@ def main():
                              clips=clips)
                 print(f"Job done ✓ {len(clips)} clips")
             except Exception as exc:
-                cloud.report(job["id"], status="failed", stage="error",
-                             message=str(exc)[:300])
-                print(f"Job FAILED: {exc}")
+                if not args.simulate and not local_alive():
+                    # Infrastructure gira hai, job ki galti nahi —
+                    # failed ki jagah wapas queue me daal do.
+                    cloud.report(job["id"], status="queued", stage="waiting",
+                                 message="local backend issue — auto requeue")
+                    print(f"Job requeue ho gaya (backend down tha): {exc}")
+                else:
+                    cloud.report(job["id"], status="failed", stage="error",
+                                 message=str(exc)[:300])
+                    print(f"Job FAILED: {exc}")
             finally:
                 _set_current(None)
         except KeyboardInterrupt:
