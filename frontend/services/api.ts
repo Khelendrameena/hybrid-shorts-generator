@@ -34,6 +34,7 @@ export const api = {
   patchClip: (cid: string, patch: any) =>
     req(`/api/clips/${cid}`, { method: "PATCH", body: JSON.stringify(patch) }),
   regenerate: (cid: string) => req(`/api/clips/${cid}/regenerate`, { method: "POST" }),
+  uploadClip: (cid: string) => req(`/api/clips/${cid}/upload`, { method: "POST" }),
   downloadUrl: (pid: string, cid: string) => `${API}/api/projects/${pid}/clips/${cid}/download`,
   exportUrl: (pid: string) => `${API}/api/projects/${pid}/export.zip`,
   srtUrl: (pid: string) => `${API}/api/projects/${pid}/transcript.srt`,

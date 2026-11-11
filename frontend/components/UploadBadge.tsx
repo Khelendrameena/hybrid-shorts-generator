@@ -25,8 +25,8 @@ export default function UploadBadge({ c }: { c: any }) {
   if (up.status === "pending") {
     return (
       <div className="rounded-xl bg-yellow-500/15 px-3 py-2 text-sm text-yellow-200">
-        ⏳ YouTube upload scheduled hai — set time par khud upload ho jayegi
-        (cloud dashboard me times/limit set hote hain)
+        ⏳ Ye clip abhi YouTube par nahi gayi hai — Editor me iske
+        ⬆ Upload button se manually bhej do
       </div>
     );
   }

@@ -91,6 +91,28 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
   const [end, setEnd] = useState(c.end);
   const [title, setTitle] = useState(c.metadata?.title || "");
   const [hook, setHook] = useState(c.metadata?.opening_hook || "");
+  const [uploading, setUploading] = useState(false);
+  const [upErr, setUpErr] = useState("");
+  const [doneUrl, setDoneUrl] = useState("");
+  const alreadyUp = c.metadata?.upload?.status === "uploaded";
+
+  async function doUpload() {
+    setUploading(true);
+    setUpErr("");
+    try {
+      // Pehle screen par dikh raha title/hook save karo, taaki upload
+      // usi title se jaye jo user dekh raha hai.
+      try {
+        await onPatch(c.id, { metadata: { ...c.metadata, title, opening_hook: hook } }, "Metadata saved");
+      } catch {}
+      const r = await api.uploadClip(c.id);
+      setDoneUrl(r.youtube_url || "");
+    } catch (e: any) {
+      setUpErr(String(e?.message || e));
+    } finally {
+      setUploading(false);
+    }
+  }
   return (
     <div className="rounded-2xl bg-panel p-5 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -137,7 +159,19 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
           className="rounded-xl bg-green-500 px-3 py-2 text-sm font-semibold text-black">✓ Approve</button>
         <button onClick={() => onPatch(c.id, { status: "rejected" }, "Rejected")}
           className="rounded-xl bg-red-500/80 px-3 py-2 text-sm font-semibold">✕ Reject</button>
+        {c.output_path && !alreadyUp && !doneUrl && (
+          <button onClick={doUpload} disabled={uploading}
+            className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold disabled:opacity-50">
+            {uploading ? "⏳ Upload ho raha hai…" : "⬆ YouTube par upload karo"}
+          </button>
+        )}
       </div>
+      {doneUrl && (
+        <p className="text-sm text-green-300">✅ Upload ho gaya —{" "}
+          <a className="underline" href={doneUrl} target="_blank" rel="noreferrer">video dekho ↗</a>
+          {" "}(page refresh par neeche badge bhi update ho jayega)</p>
+      )}
+      {upErr && <p className="text-sm text-red-400">⚠ Upload nahi hua: {upErr}</p>}
     </div>
   );
 }

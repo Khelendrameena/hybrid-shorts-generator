@@ -228,6 +228,43 @@ def regenerate_clip(cid: str):
     return md
 
 
+@router.post("/clips/{cid}/upload")
+def upload_clip(cid: str):
+    """Manual YouTube upload — sirf Editor ke ⬆ button se chalti hai.
+    Upload kahin bhi AUTO nahi hota (na render ke baad, na schedule par):
+    user jis clip ka button dabayega, sirf wahi clip jayegi."""
+    import time as _time
+
+    from ..storage import database as db
+    from ..upload.youtube import is_configured, upload_video
+
+    row = db.query_one("SELECT * FROM clips WHERE id=?", (cid,))
+    if not row:
+        raise HTTPException(404, "Clip not found")
+    if not row.get("output_path") or not Path(row["output_path"]).exists():
+        raise HTTPException(400, "Pehle is clip ko render karo — rendered file nahi mili")
+    md = db.loads(row.get("metadata"), {})
+    up = md.get("upload") or {}
+    if up.get("status") == "uploaded" and up.get("youtube_url"):
+        return {"youtube_url": up["youtube_url"], "already": True}
+    if not is_configured():
+        raise HTTPException(
+            400, "YouTube connect nahi hai — pehle terminal me "
+                 "scripts/youtube_auth.py chalao (one-time setup)")
+    title = md.get("title") or "Short"
+    description = (md.get("description") or "") + "\n#Shorts"
+    tags = [str(t).lstrip("#") for t in (md.get("hashtags") or [])]
+    try:
+        url = upload_video(row["output_path"], title, description,
+                           tags=tags, privacy_status="unlisted")
+    except Exception as exc:
+        raise HTTPException(502, f"YouTube upload fail hua: {exc}")
+    md["upload"] = {"status": "uploaded", "youtube_url": url,
+                    "uploaded_at": _time.time()}
+    pm.update_clip(cid, metadata=md)
+    return {"youtube_url": url}
+
+
 @router.post("/projects/{pid}/render")
 def render_project(pid: str):
     import threading
