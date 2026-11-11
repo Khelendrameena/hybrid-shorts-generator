@@ -18,6 +18,49 @@ def test_cuda_usable_returns_bool():
     assert isinstance(_cuda_usable(), bool)
 
 
+def test_pip_nvidia_lib_dirs_discovery(tmp_path, monkeypatch):
+    """_pip_nvidia_lib_dirs() must find <pkg>/lib for nvidia.cublas /
+    nvidia.cudnn when the pip CUDA packages are installed."""
+    import importlib.util
+    from types import SimpleNamespace as NS
+
+    made = {}
+    for mod, sub in (("nvidia.cublas", "cublas"), ("nvidia.cudnn", "cudnn")):
+        pkg = tmp_path / "nvidia" / sub
+        (pkg / "lib").mkdir(parents=True)
+        init = pkg / "__init__.py"
+        init.write_text("")
+        made[mod] = NS(origin=str(init))
+
+    monkeypatch.setattr(importlib.util, "find_spec",
+                        lambda name: made.get(name))
+    dirs = whisper_engine._pip_nvidia_lib_dirs()
+    assert dirs == [tmp_path / "nvidia" / "cublas" / "lib",
+                    tmp_path / "nvidia" / "cudnn" / "lib"]
+
+
+def test_preload_pip_cuda_libs_loads_all_three(tmp_path, monkeypatch):
+    """Copies of a real .so renamed to the CUDA lib names must load (in
+    order) from the pip lib dirs — this is the WSL no-toolkit path."""
+    import glob as globmod
+
+    real = next((p for p in globmod.glob("/lib/x86_64-linux-gnu/libm.so.6")
+                 + globmod.glob("/usr/lib/x86_64-linux-gnu/libm.so.6")), None)
+    if real is None:
+        pytest.skip("no system libm to stand in for CUDA libs")
+    libdir = tmp_path / "lib"
+    libdir.mkdir()
+    for name in ("libcublasLt.so.12", "libcublas.so.12", "libcudnn.so.9"):
+        shutil.copy(real, libdir / name)
+    monkeypatch.setattr(whisper_engine, "_pip_nvidia_lib_dirs", lambda: [libdir])
+    whisper_engine._LOADED_HANDLES.clear()
+    assert whisper_engine._preload_pip_cuda_libs() is True
+    # missing one lib -> honest False
+    (libdir / "libcudnn.so.9").unlink()
+    whisper_engine._LOADED_HANDLES.clear()
+    assert whisper_engine._preload_pip_cuda_libs() is False
+
+
 def test_cuda_usable_false_without_cublas(monkeypatch):
     import ctypes
 

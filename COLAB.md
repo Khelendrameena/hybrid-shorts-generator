@@ -33,27 +33,28 @@ Colab ki limits (honest):
 
 ## Option B — Apna RTX 3050 hi fix kar do (permanent, recommended)
 
-Ek baar WSL me CUDA toolkit + cuDNN laga do, phir hamesha ke liye tumhara
-apna GPU chalega — koi session limit nahi, koi dobara setup nahi.
-WSL Ubuntu terminal me (root ho tum):
+CUDA libraries (cuBLAS + cuDNN) pip se lagana sabse halka tareeqa hai —
+koi 4 GB ka apt toolkit nahi chahiye. Project ke venv me bas ye chalao:
 
 ```bash
-wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
-dpkg -i cuda-keyring_1.1-1_all.deb
-apt-get update
-apt-get install -y cuda-toolkit-12-6 libcudnn9-cuda-12
-ldconfig
-ldconfig -p | grep -E "cublas.so.12|cudnn.so.9"   # dono dikhne chahiye
+cd ~/video/hybrid-shorts-generator   # (tumhara path) aur .venv active rakho
+pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-Dhyaan do:
-- Sirf `cuda-toolkit` install karna — pura `cuda` package **mat** karna,
-  wo Linux display driver bhi lata hai jo WSL me conflict karta hai
-  (WSL Windows wala driver hi use karta hai).
-- Download ~4 GB hai, ek baar ka kaam hai.
-- Uske baad project restart karo (`Ctrl+C`, `./run.sh`) — agli
-  transcription me job message me device **cuda** dikhega aur Whisper
-  GPU par chalega. WSL wala download slow hai to raat ko laga ke chhod do.
+Code in dono packages ko khud dhoondh ke load karta hai
+(`whisper_engine._cuda_usable` → pip libs preload), aur `run.sh` unhe
+`LD_LIBRARY_PATH` me bhi daal deta hai. Uske baad project restart karo
+(`Ctrl+C`, `./run.sh`) — agli transcription ke job message me device
+**cuda** dikhega aur Whisper GPU par chalega.
+
+Note (2026-11-11 ko verify hua): apt wala tareeqa aadha hi kaam karta hai —
+`cuda-toolkit-12-6` NVIDIA ke wsl-ubuntu repo me hai, lekin
+`libcudnn9-cuda-12` us repo me **nahi** milta ("Unable to locate package"),
+aur ek package na milne par apt poora install rok deta hai. Isliye cuDNN
+ke liye pip wala rasta hi sahi hai; toolkit chahiye hi ho to sirf
+`apt-get install -y cuda-toolkit-12-6` chalana, saath me koi cudnn package
+mat jodna. Aur pura `cuda` metapackage kabhi mat lagana — wo Linux display
+driver lata hai jo WSL me conflict karta hai.
 
 **Meri recommendation:** permanent ke liye Option B kar do. Colab tab
 kaam ka hai jab laptop band ho ya kahin aur se kaam karna ho.

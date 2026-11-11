@@ -46,6 +46,51 @@ def _decode_audio_ffmpeg(media_path: str | Path):
     return np.frombuffer(proc.stdout, dtype=np.float32).copy()
 
 
+_LOADED_HANDLES: list = []
+
+
+def _pip_nvidia_lib_dirs() -> list[Path]:
+    """Lib dirs of the pip-bundled NVIDIA packages (nvidia-cublas-cu12 /
+    nvidia-cudnn-cu12). Installing those two pip packages is the light way
+    to get CUDA libraries on a machine with no CUDA toolkit (e.g. WSL) —
+    no multi-GB apt toolkit needed."""
+    import importlib.util
+
+    dirs: list[Path] = []
+    for mod in ("nvidia.cublas", "nvidia.cudnn"):
+        try:
+            spec = importlib.util.find_spec(mod)
+        except Exception:
+            spec = None
+        if spec is not None and spec.origin:
+            libdir = Path(spec.origin).resolve().parent / "lib"
+            if libdir.is_dir():
+                dirs.append(libdir)
+    return dirs
+
+
+def _preload_pip_cuda_libs() -> bool:
+    """Load cuBLAS + cuDNN from the pip packages with RTLD_GLOBAL so
+    CTranslate2's own dlopen() calls find them already resident (its loader
+    does not search site-packages on its own)."""
+    import ctypes
+    import os
+
+    dirs = _pip_nvidia_lib_dirs()
+    if not dirs:
+        return False
+    # load order: cublasLt before cublas (dependency), then cudnn
+    for name in ("libcublasLt.so.12", "libcublas.so.12", "libcudnn.so.9"):
+        hit = next((d / name for d in dirs if (d / name).exists()), None)
+        if hit is None:
+            return False
+        try:
+            _LOADED_HANDLES.append(ctypes.CDLL(str(hit), mode=getattr(ctypes, "RTLD_GLOBAL", os.RTLD_GLOBAL)))
+        except OSError:
+            return False
+    return True
+
+
 def _cuda_usable() -> bool:
     """True only if a CUDA device exists AND its runtime libraries load.
 
@@ -54,7 +99,9 @@ def _cuda_usable() -> bool:
     CUDA toolkit is installed — picking "cuda" then crashes mid-transcribe
     with `RuntimeError: Library libcublas.so.12 is not found or cannot be
     loaded` (seen 2026-11-10). Probing the library up front keeps "auto"
-    honest: no cuBLAS -> CPU, no crash.
+    honest: no cuBLAS -> CPU, no crash. The libraries may come from a
+    system CUDA toolkit OR from the pip packages nvidia-cublas-cu12 +
+    nvidia-cudnn-cu12 (checked and preloaded in that order).
     """
     try:
         import ctranslate2  # type: ignore
@@ -71,7 +118,7 @@ def _cuda_usable() -> bool:
             return True
         except OSError:
             continue
-    return False
+    return _preload_pip_cuda_libs()
 
 
 def _fmt_srt_time(t: float) -> str:
