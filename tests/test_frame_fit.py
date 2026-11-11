@@ -78,6 +78,25 @@ def test_fit_render_keeps_all_four_corners_visible(tmp_path):
         capture_output=True, text=True)
     assert probe.stdout.strip() == "1080,1920"
 
+    # Playback-standard regression (user report 2026-11-11: downloaded Shorts
+    # stalled/"buffered" on the phone): audio must be the standard 48kHz —
+    # loudnorm used to upsample 44.1k -> 96k, which many players choke on.
+    aprobe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0",
+         "-show_entries", "stream=sample_rate", "-of", "csv=p=0", str(out)],
+        capture_output=True, text=True)
+    assert aprobe.stdout.strip() == "48000"
+    # ...and a keyframe at least every ~2s (x264's default GOP put them
+    # ~8.3s apart, which feels like buffering when a player starts/seeks).
+    frames = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "frame=key_frame,best_effort_timestamp_time",
+         "-of", "csv=p=0", str(out)], capture_output=True, text=True)
+    key_times = [float(ln.split(",")[1]) for ln in frames.stdout.splitlines()
+                 if ln.startswith("1,")]
+    assert key_times and key_times[0] == 0.0
+    assert len(key_times) >= 2 and key_times[1] <= 2.1
+
     # Foreground: 1080 wide, ~607 tall, centred -> top edge ~656, bottom ~1263.
     # Sample just inside each foreground corner: all four must be RED.
     for (x, y) in [(10, 666), (1050, 666), (10, 1233), (1050, 1233)]:
