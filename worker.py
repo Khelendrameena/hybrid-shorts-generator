@@ -101,6 +101,41 @@ class Cloud:
             return {}
 
 
+def set_local_upload_status(cid: str, base_metadata: dict | None,
+                              status: str, youtube_url: str = "",
+                              uploaded_at: float = 0):
+    """Upload status local backend ke clip metadata me bhi likho, taaki
+    localhost:3000 (Editor/Export) par bhi dikhe. Metadata PURA replace
+    hota hai backend me, isliye purana metadata merge karke bhejo.
+    Best-effort: fail ho to koi baat nahi, cloud dashboard master hai."""
+    try:
+        md = dict(base_metadata or {})
+        md["upload"] = {"status": status, "youtube_url": youtube_url,
+                        "uploaded_at": uploaded_at}
+        http_json("PATCH", f"{LOCAL_API}/clips/{cid}",
+                  {"metadata": md}, timeout=15)
+    except Exception:
+        pass
+
+
+def sync_local_upload(clip: dict, status: str):
+    """Scheduler ke liye: cloud clip entry ke local ids se local clip
+    dhoondh kar uska upload status update karo."""
+    pid, cid = clip.get("local_project_id"), clip.get("local_clip_id")
+    if not pid or not cid:
+        return
+    try:
+        detail = http_json("GET", f"{LOCAL_API}/projects/{pid}", timeout=15)
+        for lc in detail.get("clips") or []:
+            if lc.get("id") == cid:
+                set_local_upload_status(
+                    cid, lc.get("metadata"), status,
+                    clip.get("youtube_url", ""), clip.get("uploaded_at", 0))
+                break
+    except Exception:
+        pass
+
+
 # ------------------------------------------------------------- local backend
 
 def local_alive() -> bool:
@@ -195,8 +230,10 @@ def ensure_frontend():
         return False
     print("Local dashboard (frontend) start kar raha hu — localhost:3000 ...")
     log = open(os.path.join(ROOT, "worker-frontend.log"), "ab")
-    built = os.path.exists(os.path.join(fe_dir, ".next", "BUILD_ID"))
-    cmd = ["npm", "run", "start"] if built else ["npm", "run", "dev"]
+    # Hamesha dev mode (run.sh ki tarah): git pull ke baad naye UI
+    # changes bina build kiye turant dikhte hain. Production build
+    # purana pad jaye to naye features localhost par nahi dikhenge.
+    cmd = ["npm", "run", "dev"]
     try:
         subprocess.Popen(cmd, cwd=fe_dir, stdout=log, stderr=log)
     except Exception as exc:
@@ -348,7 +385,8 @@ def process_job(cloud: Cloud, job: dict, settings: dict) -> list[dict]:
             f.write(data)
         entry = {"title": c.get("title") or "Short", "file": name,
                  "score": c.get("score"), "youtube_url": "",
-                 "upload_status": "none", "uploaded_at": 0}
+                 "upload_status": "none", "uploaded_at": 0,
+                 "local_clip_id": c["id"], "local_project_id": pid}
         if do_upload:
             if settings.get("upload_schedule_enabled") == "1":
                 # Schedule ON: abhi upload nahi — scheduler set time
@@ -374,6 +412,11 @@ def process_job(cloud: Cloud, job: dict, settings: dict) -> list[dict]:
                 except Exception as exc:
                     entry["upload_status"] = "pending"
                     entry["note"] = f"upload failed (pending me rakha hai): {exc}"
+        if entry["upload_status"] in ("pending", "uploaded"):
+            set_local_upload_status(c["id"], c.get("metadata"),
+                                    entry["upload_status"],
+                                    entry["youtube_url"],
+                                    entry["uploaded_at"])
         results.append(entry)
     return results
 
@@ -443,6 +486,7 @@ def run_upload_scheduler(cloud: Cloud, settings: dict):
             clip["upload_status"] = "missing"
             clip["note"] = "file laptop par nahi mili (cloud_outputs se hati?)"
             cloud.report(item["job_id"], clips=job_clips)
+            sync_local_upload(clip, "missing")
             print(f"Scheduler: clip file missing — {clip.get('title')}")
             return
         print(f"Scheduler: upload kar raha hu — {clip.get('title', '')[:60]}")
@@ -454,6 +498,7 @@ def run_upload_scheduler(cloud: Cloud, settings: dict):
         clip["uploaded_at"] = time.time()
         clip.pop("note", None)
         cloud.report(item["job_id"], clips=job_clips)
+        sync_local_upload(clip, "uploaded")
         print(f"Scheduler: uploaded ✓ {url} (aaj ke {done_today + 1}/{limit})")
     except Exception as exc:
         print(f"[scheduler error: {exc}]")

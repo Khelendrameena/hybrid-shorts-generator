@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, Suspense } from "react";
 import { api, fmtTime } from "../../services/api";
 import { useProject } from "../../hooks/useProject";
+import UploadBadge from "../../components/UploadBadge";
 
 function EditorInner() {
   const { pid, project } = useProject();
@@ -113,6 +114,7 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
             Saari rendered Shorts ek saath chahiye to Export page se ZIP download karo.</p>
         </div>
       )}
+      <UploadBadge c={c} />
       <p className="text-sm text-white/70 line-clamp-3">“{c.transcript}”</p>
       <label className="block text-xs text-white/50">Title
         <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full rounded bg-black/30 px-3 py-2 text-sm text-white" /></label>

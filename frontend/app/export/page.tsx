@@ -2,6 +2,7 @@
 import { Suspense } from "react";
 import { api, fmtTime } from "../../services/api";
 import { useProject } from "../../hooks/useProject";
+import UploadBadge from "../../components/UploadBadge";
 
 function ExportPageInner() {
   const { pid, project } = useProject();
@@ -34,6 +35,7 @@ function ExportPageInner() {
               : <span className="ml-auto text-xs text-white/30">
                   {c.status === "approved" ? "approved — Editor se Render karo" : "not rendered — pehle Editor me ✓ Approve karo, phir Render"}
                 </span>}
+            <div className="w-full"><UploadBadge c={c} /></div>
           </div>
         ))}
       </div>
