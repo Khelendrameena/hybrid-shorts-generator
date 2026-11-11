@@ -5,6 +5,14 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   if (!isAuthed(req)) return NextResponse.json({ detail: "login required" }, { status: 401 });
+  try {
+    return await handle();
+  } catch (e: any) {
+    return NextResponse.json({ error: String(e?.message || e) }, { status: 500 });
+  }
+}
+
+async function handle() {
   await initDb();
   await requeueStale();
   const settings = await getSettings();

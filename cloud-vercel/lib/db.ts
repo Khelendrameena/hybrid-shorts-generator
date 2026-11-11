@@ -6,18 +6,31 @@
  * Local dev/test: built-in node:sqlite file, same SQL ($n placeholders
  * are translated to ?). Tables and behaviour mirror cloud/app.py.
  */
-import { neon } from "@neondatabase/serverless";
-
 export type Row = Record<string, any>;
 
 const DATABASE_URL = process.env.DATABASE_URL || "";
 
-let _neonSql: any = null;
 let _sqlite: any = null;
 
-function neonSql() {
-  if (!_neonSql) _neonSql = neon(DATABASE_URL);
-  return _neonSql;
+/** Neon over its plain HTTPS query endpoint — no driver-version traps:
+ *  POST https://<host>/sql  {query, params}  with the connection string
+ *  in the Neon-Connection-String header. $n placeholders natively. */
+async function neonQuery(text: string, params: any[]): Promise<Row[]> {
+  const host = new URL(DATABASE_URL).host;
+  const res = await fetch(`https://${host}/sql`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Neon-Connection-String": DATABASE_URL,
+    },
+    body: JSON.stringify({ query: text, params }),
+  });
+  const data: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `Neon DB error (${res.status}): ${data.message || JSON.stringify(data).slice(0, 200)}`);
+  }
+  return (data.rows || []) as Row[];
 }
 
 function sqliteDb() {
@@ -41,8 +54,7 @@ export async function q(text: string, params: any[] = []): Promise<Row[]> {
       "Neon Postgres ka connection string daalo, phir redeploy karo.");
   }
   if (DATABASE_URL) {
-    const rows = await neonSql().query(text, params);
-    return rows as Row[];
+    return neonQuery(text, params);
   }
   const db = sqliteDb();
   const sql = text.replace(/\$\d+/g, "?");
