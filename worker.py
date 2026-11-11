@@ -31,7 +31,9 @@ import urllib.request
 import urllib.error
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-LOCAL_API = os.environ.get("LOCAL_API", "http://127.0.0.1:8000")
+# NOTE: the local backend mounts every route under /api (APIRouter
+# prefix) — health, projects, jobs, clips sab /api/... par hain.
+LOCAL_API = os.environ.get("LOCAL_API", "http://127.0.0.1:8000/api")
 OUT_DIR = os.path.join(ROOT, "cloud_outputs")
 WORKER_ID = os.environ.get("WORKER_ID", "laptop-1")
 POLL_SEC = int(os.environ.get("WORKER_POLL_SEC", "15"))
