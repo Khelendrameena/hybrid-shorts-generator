@@ -125,10 +125,22 @@ def ensure_local_backend():
     print("Local backend down hai — start kar raha hu...")
     log_path = os.path.join(ROOT, "worker-backend.log")
     log = open(log_path, "ab")
+    # run.sh jaisa environment: USE_TF=0 (TensorFlow load hi na ho) aur
+    # pip-wali CUDA libs ka path — bina iske backend start/runtime me
+    # atak sakta hai.
+    env = dict(os.environ)
+    env.setdefault("USE_TF", "0")
+    import glob as _glob
+    nv = [d for pat in ("nvidia/cublas/lib", "nvidia/cudnn/lib")
+          for d in _glob.glob(os.path.join(
+              ROOT, ".venv", "lib", "python*", "site-packages", pat))]
+    if nv:
+        env["LD_LIBRARY_PATH"] = ":".join(
+            nv + ([env["LD_LIBRARY_PATH"]] if env.get("LD_LIBRARY_PATH") else []))
     subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "backend.main:app",
          "--host", "127.0.0.1", "--port", "8000"],
-        cwd=ROOT, stdout=log, stderr=log)
+        cwd=ROOT, stdout=log, stderr=log, env=env)
     if shutil.which("ollama"):
         try:
             http_json("GET", "http://127.0.0.1:11434/api/tags", timeout=2)
