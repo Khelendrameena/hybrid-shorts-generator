@@ -11,3 +11,8 @@ frontend/.next/
 *.log
 .DS_Store
 .pytest_cache/
+
+# YouTube OAuth secrets — kabhi commit mat karna
+client_secret*.json
+yt_token.json
+.hybrid-shorts/
