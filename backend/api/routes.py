@@ -228,6 +228,57 @@ def regenerate_clip(cid: str):
     return md
 
 
+_VIRAL_TAGS = ["shorts", "ytshorts", "viral shorts", "trending shorts",
+               "short video"]
+_VIRAL_HASHTAGS = ["shorts", "viral", "trending", "ytshorts", "shortvideo"]
+
+
+def _shorts_package(row, md) -> tuple[str, str, list[str]]:
+    """Ek Short ka pura upload package: title, description, tags.
+
+    YouTube ke rules dhyaan me rakh kar:
+    - Description me 15 se zyada hashtags hon to YouTube SAARI hashtags
+      ignore kar deta hai — isliye hashtags cap 12 rakhe hain.
+    - Tags ki total limit 500 characters — package ~480 par roka hai.
+    - Pehli line hook hoti hai (wahi dikhta hai, wahi rokta hai)."""
+    title = (md.get("title") or "Short").strip()
+    hook = (md.get("opening_hook") or "").strip()
+    body = (md.get("description") or "").strip()
+
+    own_tags: list[str] = []
+    for t in md.get("hashtags") or []:
+        t = str(t).strip().lstrip("#").strip()
+        if t and t.lower() not in [x.lower() for x in own_tags]:
+            own_tags.append(t)
+    cat = (row.get("category") or "").strip()
+    tags: list[str] = []
+    for t in own_tags + ([cat] if cat else []) + _VIRAL_TAGS:
+        if t.lower() not in [x.lower() for x in tags]:
+            tags.append(t)
+    while sum(len(t) + 1 for t in tags) > 480 and len(tags) > 3:
+        tags.pop()
+
+    hashtags: list[str] = []
+    # #shorts sabse pehle (sabse zaruri), phir clip ke apne, phir
+    # viral wale — taaki cap lagne par bhi zaruri wale na katen.
+    for t in ["shorts"] + own_tags + _VIRAL_HASHTAGS:
+        h = "#" + t.replace(" ", "")
+        if h.lower() not in [x.lower() for x in hashtags]:
+            hashtags.append(h)
+    hashtags = hashtags[:12]
+
+    parts: list[str] = []
+    if hook:
+        parts.append(hook)
+    if body and body.lower() != hook.lower():
+        parts.append(body)
+    proj = pm.get_project(row["project_id"]) or {}
+    if proj.get("source_type") == "youtube" and proj.get("source_ref"):
+        parts.append(f"🎬 Full video yahan dekho: {proj['source_ref']}")
+    parts.append(" ".join(hashtags))
+    return title, "\n\n".join(parts), tags
+
+
 @router.post("/clips/{cid}/upload")
 def upload_clip(cid: str):
     """Manual YouTube upload — sirf Editor ke ⬆ button se chalti hai.
@@ -265,24 +316,57 @@ def upload_clip(cid: str):
                      "End time kam karke dobara render karo")
     md = db.loads(row.get("metadata"), {})
     up = md.get("upload") or {}
+
+    def _thumbnail(vid: str) -> tuple[str, str]:
+        """Best frame chun kar custom thumbnail lagao. Fail ho to
+        upload fail NAHI hota — sirf wajah report hoti hai."""
+        try:
+            from ..upload.thumbnail import pick_thumbnail
+            from ..upload.youtube import set_thumbnail
+            tdir = pm.project_dir(row["project_id"]) / "thumbnails"
+            img = pick_thumbnail(row["output_path"], tdir / f"{cid}.jpg",
+                                 text=md.get("thumbnail_text") or "")
+            set_thumbnail(vid, img)
+            return "set", ""
+        except Exception as exc:
+            return "failed", str(exc)[:200]
+
     if up.get("status") == "uploaded" and up.get("youtube_url"):
-        return {"youtube_url": up["youtube_url"], "already": True}
+        # Pehle se uploaded clip — sirf thumbnail bacha ho to wahi lagao.
+        if up.get("thumbnail") == "set":
+            return {"youtube_url": up["youtube_url"], "already": True,
+                    "thumbnail": "set"}
+        if not is_configured():
+            return {"youtube_url": up["youtube_url"], "already": True,
+                    "thumbnail": "failed",
+                    "thumbnail_error": "YouTube connect nahi hai"}
+        from ..upload.youtube import video_id_from_url
+        st, err = _thumbnail(video_id_from_url(up["youtube_url"]))
+        up["thumbnail"] = st
+        if err:
+            up["thumbnail_error"] = err
+        md["upload"] = up
+        pm.update_clip(cid, metadata=md)
+        return {"youtube_url": up["youtube_url"], "already": True,
+                "thumbnail": st, "thumbnail_error": err}
+
     if not is_configured():
         raise HTTPException(
             400, "YouTube connect nahi hai — pehle terminal me "
                  "scripts/youtube_auth.py chalao (one-time setup)")
-    title = md.get("title") or "Short"
-    description = (md.get("description") or "") + "\n#Shorts"
-    tags = [str(t).lstrip("#") for t in (md.get("hashtags") or [])]
+    title, description, tags = _shorts_package(row, md)
     try:
         url = upload_video(row["output_path"], title, description,
-                           tags=tags, privacy_status="unlisted")
+                           tags=tags, privacy_status="public")
     except Exception as exc:
         raise HTTPException(502, f"YouTube upload fail hua: {exc}")
+    from ..upload.youtube import video_id_from_url
+    st, err = _thumbnail(video_id_from_url(url))
     md["upload"] = {"status": "uploaded", "youtube_url": url,
-                    "uploaded_at": _time.time()}
+                    "uploaded_at": _time.time(), "thumbnail": st,
+                    **({"thumbnail_error": err} if err else {})}
     pm.update_clip(cid, metadata=md)
-    return {"youtube_url": url}
+    return {"youtube_url": url, "thumbnail": st, "thumbnail_error": err}
 
 
 @router.post("/projects/{pid}/render")

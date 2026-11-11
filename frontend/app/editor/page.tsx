@@ -94,7 +94,17 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
   const [uploading, setUploading] = useState(false);
   const [upErr, setUpErr] = useState("");
   const [doneUrl, setDoneUrl] = useState("");
+  const [thumbInfo, setThumbInfo] = useState("");
+  const [thumbBusy, setThumbBusy] = useState(false);
+  const [thumbMsg, setThumbMsg] = useState("");
   const alreadyUp = c.metadata?.upload?.status === "uploaded";
+
+  function noteThumb(r: any) {
+    if (r?.thumbnail === "set") return " · 🖼 thumbnail bhi apne aap lag gaya";
+    if (r?.thumbnail === "failed")
+      return ` · ⚠ thumbnail nahi laga (${r.thumbnail_error || "channel par custom thumbnail allowed nahi hoga"})`;
+    return "";
+  }
 
   async function doUpload() {
     setUploading(true);
@@ -107,10 +117,26 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
       } catch {}
       const r = await api.uploadClip(c.id);
       setDoneUrl(r.youtube_url || "");
+      setThumbInfo(noteThumb(r));
     } catch (e: any) {
       setUpErr(String(e?.message || e));
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function doThumbnail() {
+    setThumbBusy(true);
+    setThumbMsg("");
+    try {
+      const r = await api.uploadClip(c.id);
+      setThumbMsg(r?.thumbnail === "set"
+        ? "🖼 Thumbnail lag gaya ✓ (page refresh par badge me bhi dikhega)"
+        : `⚠ Thumbnail nahi laga: ${r?.thumbnail_error || "unknown error"}`);
+    } catch (e: any) {
+      setThumbMsg(`⚠ ${String(e?.message || e)}`);
+    } finally {
+      setThumbBusy(false);
     }
   }
   return (
@@ -137,6 +163,15 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
         </div>
       )}
       <UploadBadge c={c} />
+      {alreadyUp && c.metadata?.upload?.thumbnail !== "set" && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={doThumbnail} disabled={thumbBusy}
+            className="rounded-xl bg-white/10 px-3 py-2 text-sm disabled:opacity-50">
+            {thumbBusy ? "⏳ Thumbnail lag raha hai…" : "🖼 Thumbnail lagao (auto)"}
+          </button>
+          {thumbMsg && <span className="text-xs text-white/60">{thumbMsg}</span>}
+        </div>
+      )}
       <p className="text-sm text-white/70 line-clamp-3">“{c.transcript}”</p>
       <label className="block text-xs text-white/50">Title
         <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full rounded bg-black/30 px-3 py-2 text-sm text-white" /></label>
@@ -167,8 +202,9 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
         )}
       </div>
       {doneUrl && (
-        <p className="text-sm text-green-300">✅ Upload ho gaya —{" "}
+        <p className="text-sm text-green-300">✅ Upload ho gaya (Public) —{" "}
           <a className="underline" href={doneUrl} target="_blank" rel="noreferrer">video dekho ↗</a>
+          {thumbInfo}
           {" "}(page refresh par neeche badge bhi update ho jayega)</p>
       )}
       {upErr && <p className="text-sm text-red-400">⚠ Upload nahi hua: {upErr}</p>}

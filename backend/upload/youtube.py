@@ -1,6 +1,6 @@
 """YouTube upload via the official YouTube Data API v3.
 
-One-time setup (on the laptop, see CLOUD.md):
+One-time setup (on the laptop):
   1. Google Cloud project -> enable "YouTube Data API v3"
   2. OAuth client (Desktop) -> download client_secret_*.json
   3. python scripts/youtube_auth.py --client-secret <file>
@@ -13,6 +13,7 @@ anywhere except Google's own API endpoints.
 from __future__ import annotations
 
 import os
+import re
 
 TOKEN_PATH = os.environ.get(
     "YT_TOKEN_FILE",
@@ -32,25 +33,39 @@ def is_configured() -> bool:
         return False
 
 
-def upload_video(file_path: str, title: str, description: str = "",
-                 tags: list[str] | None = None,
-                 privacy_status: str = "unlisted",
-                 category_id: str = "24") -> str:
-    """Upload one video; returns its YouTube watch URL."""
+def _credentials():
+    """Saved token load karo; expire ho gaya ho to refresh + re-save."""
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaFileUpload
 
     creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         with open(TOKEN_PATH, "w") as f:
             f.write(creds.to_json())
+    return creds
+
+
+def _youtube():
+    from googleapiclient.discovery import build
+    return build("youtube", "v3", credentials=_credentials())
+
+
+def video_id_from_url(url: str) -> str:
+    m = re.search(r"(?:v=|shorts/|youtu\.be/)([A-Za-z0-9_-]{6,})", url or "")
+    return m.group(1) if m else ""
+
+
+def upload_video(file_path: str, title: str, description: str = "",
+                 tags: list[str] | None = None,
+                 privacy_status: str = "public",
+                 category_id: str = "24") -> str:
+    """Upload one video; returns its YouTube watch URL."""
+    from googleapiclient.http import MediaFileUpload
 
     if "#shorts" not in title.lower():
         title = (title[:90] + " #Shorts").strip()
-    youtube = build("youtube", "v3", credentials=creds)
+    youtube = _youtube()
     body = {
         "snippet": {
             "title": title[:100],
@@ -70,3 +85,18 @@ def upload_video(file_path: str, title: str, description: str = "",
         _status, resp = req.next_chunk()
     vid = resp["id"]
     return f"https://www.youtube.com/watch?v={vid}"
+
+
+def set_thumbnail(video_id: str, image_path: str) -> None:
+    """Video par custom thumbnail lagao (thumbnails.set).
+
+    Note: channel ka custom-thumbnail feature eligible hona chahiye
+    (aam taur par phone-verified channel). Nahi ho to API error degi —
+    caller use pakad kar user ko bata deta hai, upload fail nahi hota."""
+    from googleapiclient.http import MediaFileUpload
+
+    youtube = _youtube()
+    youtube.thumbnails().set(
+        videoId=video_id,
+        media_body=MediaFileUpload(image_path, mimetype="image/jpeg"),
+    ).execute()

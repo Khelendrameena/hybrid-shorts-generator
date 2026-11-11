@@ -13,7 +13,7 @@ export default function UploadBadge({ c }: { c: any }) {
       : "";
     return (
       <div className="rounded-xl bg-green-500/15 px-3 py-2 text-sm text-green-300">
-        ✅ YouTube par upload ho gayi{when ? ` · ${when}` : ""}{" "}
+        ✅ YouTube par upload ho gayi{when ? ` · ${when}` : ""}{up.thumbnail === "set" ? " · 🖼 thumbnail laga hai" : ""}{" "}
         {up.youtube_url && (
           <a className="underline" href={up.youtube_url} target="_blank" rel="noreferrer">
             video dekho ↗
