@@ -44,3 +44,8 @@ pytest>=8.2
 google-api-python-client
 google-auth
 google-auth-oauthlib
+# Upload transport (60s timeout wala AuthorizedHttp) — google-auth ke
+# naye versions me google.auth.transport.httplib2 hata diya gaya hai,
+# isliye ye dono seedha dependencies hain, sirf transitive nahi.
+google-auth-httplib2
+httplib2

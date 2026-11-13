@@ -46,17 +46,45 @@ def _credentials():
     return creds
 
 
-def _youtube():
+def _authorized_http(creds):
+    """Credentials ke saath 60s socket-timeout wala HTTP transport.
+
+    Default transport ka koi timeout nahi hota — ek atka hua chunk
+    upload ko hamesha ke liye latka sakta hai (user report 2026-11-13:
+    status "progress" par hi ruk gaya tha). 60s timeout ke saath atki
+    request fail hogi, hang nahi hogi.
+
+    Transport class ki jagah dhyaan se: google-auth ke NAYE versions
+    me `google.auth.transport.httplib2` module hata diya gaya hai —
+    user ke WSL par wahi crash aaya ("No module named
+    'google.auth.transport.httplib2'", 2026-11-13 shaam). Pehle
+    `google_auth_httplib2` try karo (yahi class google-api-python-
+    client khud andar use karta hai), phir purana transport, aur
+    aakhir me None (caller default credentials flow par gir jayega —
+    timeout nahi milega, par upload chalega to sahi)."""
     import httplib2
-    from google.auth.transport.httplib2 import AuthorizedHttp
+
+    http = httplib2.Http(timeout=60)
+    try:
+        import google_auth_httplib2
+        return google_auth_httplib2.AuthorizedHttp(creds, http=http)
+    except ImportError:
+        pass
+    try:
+        from google.auth.transport.httplib2 import AuthorizedHttp
+        return AuthorizedHttp(creds, http=http)
+    except ImportError:
+        return None
+
+
+def _youtube():
     from googleapiclient.discovery import build
 
-    # Default transport ka koi socket timeout nahi hota — ek atka hua
-    # chunk upload ko hamesha ke liye latka sakta hai (user report
-    # 2026-11-13: upload status "progress" par hi ruk gaya tha). 60s
-    # timeout ke saath atki request fail hogi, hang nahi hogi.
-    http = AuthorizedHttp(_credentials(), http=httplib2.Http(timeout=60))
-    return build("youtube", "v3", http=http)
+    creds = _credentials()
+    http = _authorized_http(creds)
+    if http is not None:
+        return build("youtube", "v3", http=http)
+    return build("youtube", "v3", credentials=creds)
 
 
 def video_id_from_url(url: str) -> str:
