@@ -47,8 +47,16 @@ def _credentials():
 
 
 def _youtube():
+    import httplib2
+    from google.auth.transport.httplib2 import AuthorizedHttp
     from googleapiclient.discovery import build
-    return build("youtube", "v3", credentials=_credentials())
+
+    # Default transport ka koi socket timeout nahi hota — ek atka hua
+    # chunk upload ko hamesha ke liye latka sakta hai (user report
+    # 2026-11-13: upload status "progress" par hi ruk gaya tha). 60s
+    # timeout ke saath atki request fail hogi, hang nahi hogi.
+    http = AuthorizedHttp(_credentials(), http=httplib2.Http(timeout=60))
+    return build("youtube", "v3", http=http)
 
 
 def video_id_from_url(url: str) -> str:
@@ -59,8 +67,18 @@ def video_id_from_url(url: str) -> str:
 def upload_video(file_path: str, title: str, description: str = "",
                  tags: list[str] | None = None,
                  privacy_status: str = "public",
-                 category_id: str = "24") -> str:
-    """Upload one video; returns its YouTube watch URL."""
+                 category_id: str = "24",
+                 progress_cb=None) -> str:
+    """Upload one video; returns its YouTube watch URL.
+
+    progress_cb(pct) har chunk ke baad call hota hai (0-100), taaki UI
+    me asal progress % dikhe — sirf ghumta hua spinner nahi. Chunk fail
+    ho to kuch baar retry hota hai; resumable upload hai, dobara chunk
+    bhejna safe hai. Saare retries khatm ho jayein to exception uthta
+    hai — pehle wala loop bina timeout/retry-limit ke hamesha ke liye
+    atak sakta tha."""
+    import time as _time
+
     from googleapiclient.http import MediaFileUpload
 
     if "#shorts" not in title.lower():
@@ -81,8 +99,21 @@ def upload_video(file_path: str, title: str, description: str = "",
     req = youtube.videos().insert(part="snippet,status", body=body,
                                   media_body=media)
     resp = None
+    attempts = 0
     while resp is None:
-        _status, resp = req.next_chunk()
+        try:
+            status, resp = req.next_chunk()
+        except Exception:
+            attempts += 1
+            if attempts > 5:
+                raise
+            _time.sleep(min(30, 2 * attempts))
+            continue
+        if status is not None and progress_cb is not None:
+            try:
+                progress_cb(int(status.progress() * 100))
+            except Exception:
+                pass
     vid = resp["id"]
     return f"https://www.youtube.com/watch?v={vid}"
 

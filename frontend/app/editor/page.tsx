@@ -92,12 +92,75 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
   const [title, setTitle] = useState(c.metadata?.title || "");
   const [hook, setHook] = useState(c.metadata?.opening_hook || "");
   const [uploading, setUploading] = useState(false);
+  const [upSecs, setUpSecs] = useState(0);
   const [upErr, setUpErr] = useState("");
   const [doneUrl, setDoneUrl] = useState("");
   const [thumbInfo, setThumbInfo] = useState("");
   const [thumbBusy, setThumbBusy] = useState(false);
   const [thumbMsg, setThumbMsg] = useState("");
+  const [upPct, setUpPct] = useState(0);
+  const watchRef = useRef<any>(null);
   const alreadyUp = c.metadata?.upload?.status === "uploaded";
+
+  // Upload ab backend me background chalta hai aur asal progress %
+  // clip ke metadata.upload me aati hai — yahan poll karke wahi %
+  // button par dikhate hain. Page refresh ke baad bhi (neeche wala
+  // effect) watching apne aap resume ho jati hai, kyunki status DB
+  // me hai, browser ke ghumte spinner me nahi.
+  function stopWatch() {
+    if (watchRef.current) { clearInterval(watchRef.current); watchRef.current = null; }
+  }
+
+  function watchUpload() {
+    if (watchRef.current) return;
+    const t0 = Date.now();
+    watchRef.current = setInterval(async () => {
+      try {
+        const p = await api.project(pid);
+        const me = (p?.clips || []).find((x: any) => x.id === c.id);
+        const u = me?.metadata?.upload;
+        if (u?.status === "uploading") {
+          setUpPct(u.progress || 0);
+        } else if (u?.status === "uploaded") {
+          stopWatch();
+          setUploading(false);
+          setDoneUrl(u.youtube_url || "");
+          setThumbInfo(u.thumbnail === "set"
+            ? " · 🖼 thumbnail bhi apne aap lag gaya"
+            : u.thumbnail_error ? ` · ⚠ thumbnail nahi laga (${u.thumbnail_error})` : "");
+          setTimeout(() => location.reload(), 1200);
+        } else if (u?.status === "failed") {
+          stopWatch();
+          setUploading(false);
+          setUpErr(u.error || "YouTube upload fail hua — dobara try karo");
+        }
+      } catch {}
+      if (Date.now() - t0 > 20 * 60 * 1000) {
+        stopWatch();
+        setUploading(false);
+        setUpErr("Upload 20 minute se zyada atka hai — backend wala terminal dekho, phir dobara try karo");
+      }
+    }, 3000);
+  }
+
+  useEffect(() => {
+    if (c.metadata?.upload?.status === "uploading") {
+      setUploading(true);
+      setUpPct(c.metadata.upload.progress || 0);
+      watchUpload();
+    }
+    return stopWatch;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Upload chalte hue elapsed seconds dikhao — YouTube upload me
+  // 1-3 min lag sakta hai, spinner akela "stuck" lagta hai.
+  useEffect(() => {
+    if (!uploading) return;
+    setUpSecs(0);
+    const t = setInterval(() => setUpSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [uploading]);
 
   function noteThumb(r: any) {
     if (r?.thumbnail === "set") return " · 🖼 thumbnail bhi apne aap lag gaya";
@@ -109,18 +172,32 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
   async function doUpload() {
     setUploading(true);
     setUpErr("");
+    setUpPct(0);
     try {
       // Pehle screen par dikh raha title/hook save karo, taaki upload
       // usi title se jaye jo user dekh raha hai.
+      // !!! onPatch() yahan use MAT karo: wo save ke 500ms baad
+      // location.reload() karta hai, jo chal rahi upload fetch ko
+      // abort kar deta hai — button hamesha "Upload ho raha hai…"
+      // par atka dikhta hai aur upload ka jawab kabhi nahi milta
+      // (bug report 2026-11-13). Seedha patchClip call karo, reload nahi.
       try {
-        await onPatch(c.id, { metadata: { ...c.metadata, title, opening_hook: hook } }, "Metadata saved");
+        await api.patchClip(c.id, { metadata: { ...c.metadata, title, opening_hook: hook } });
       } catch {}
       const r = await api.uploadClip(c.id);
+      if (r?.status === "uploading") {
+        // Asal upload backend me background chal raha hai aur ye
+        // request turant wapas aa gayi hai — asal progress % poll
+        // karke dikhayenge (watchUpload); uploading state wahi band
+        // karega, isliye yahan setUploading(false) nahi karte.
+        watchUpload();
+        return;
+      }
       setDoneUrl(r.youtube_url || "");
       setThumbInfo(noteThumb(r));
+      setUploading(false);
     } catch (e: any) {
       setUpErr(String(e?.message || e));
-    } finally {
       setUploading(false);
     }
   }
@@ -197,7 +274,7 @@ function ClipCard({ clip: c, pid, onPatch }: any) {
         {c.output_path && !alreadyUp && !doneUrl && (
           <button onClick={doUpload} disabled={uploading}
             className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold disabled:opacity-50">
-            {uploading ? "⏳ Upload ho raha hai…" : "⬆ YouTube par upload karo"}
+            {uploading ? `⏳ Upload ho raha hai… ${upPct}% · ${upSecs}s` : "⬆ YouTube par upload karo"}
           </button>
         )}
       </div>

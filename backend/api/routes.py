@@ -279,15 +279,85 @@ def _shorts_package(row, md) -> tuple[str, str, list[str]]:
     return title, "\n\n".join(parts), tags
 
 
+def _upload_worker(cid: str, title: str, description: str,
+                   tags: list) -> None:
+    """Background YouTube upload — route turant "uploading" status ke
+    saath wapas aa jati hai, aur asal progress clip ke metadata.upload
+    me likhi jati rehti hai.
+
+    Purana flow ek hi lambi synchronous request thi: browser ka request
+    pure upload tak khula rehta tha, progress kahin dikhta hi nahi tha,
+    aur request/connection atke to status hamesha ke liye "progress"
+    par latak jata tha (user report 2026-11-13). Ab status DB me hai —
+    page refresh ke baad bhi sach dikhta hai, aur fail ho to wajah ke
+    saath "failed" likha jata hai, latka nahi rehta."""
+    import time as _time
+
+    from ..storage import database as db
+    from ..upload.youtube import upload_video, video_id_from_url
+
+    def _write(**fields) -> None:
+        row = db.query_one("SELECT * FROM clips WHERE id=?", (cid,))
+        if not row:
+            return
+        md = db.loads(row.get("metadata"), {})
+        up = dict(md.get("upload") or {})
+        for k, v in fields.items():
+            if v is None:
+                up.pop(k, None)
+            else:
+                up[k] = v
+        md["upload"] = up
+        pm.update_clip(cid, metadata=md)
+
+    last = {"pct": -10}
+
+    def _cb(pct: int) -> None:
+        if pct - last["pct"] >= 2 or pct >= 100:
+            last["pct"] = pct
+            _write(progress=pct)
+
+    row = db.query_one("SELECT * FROM clips WHERE id=?", (cid,))
+    if not row:
+        return
+    try:
+        url = upload_video(row["output_path"], title, description,
+                           tags=tags, privacy_status="public",
+                           progress_cb=_cb)
+    except Exception as exc:
+        _write(status="failed", error=str(exc)[:300],
+               failed_at=_time.time())
+        return
+    # Thumbnail: fail ho to upload fail NAHI hota (purani guarantee).
+    st, err = "failed", ""
+    try:
+        from ..upload.thumbnail import pick_thumbnail
+        from ..upload.youtube import set_thumbnail
+        md0 = db.loads(row.get("metadata"), {})
+        tdir = pm.project_dir(row["project_id"]) / "thumbnails"
+        img = pick_thumbnail(row["output_path"], tdir / f"{cid}.jpg",
+                             text=md0.get("thumbnail_text") or "")
+        set_thumbnail(video_id_from_url(url), img)
+        st = "set"
+    except Exception as exc:
+        err = str(exc)[:200]
+    _write(status="uploaded", progress=100, youtube_url=url,
+           uploaded_at=_time.time(), thumbnail=st, error=None,
+           **({"thumbnail_error": err} if err else {}))
+
+
 @router.post("/clips/{cid}/upload")
 def upload_clip(cid: str):
     """Manual YouTube upload — sirf Editor ke ⬆ button se chalti hai.
     Upload kahin bhi AUTO nahi hota (na render ke baad, na schedule par):
-    user jis clip ka button dabayega, sirf wahi clip jayegi."""
+    user jis clip ka button dabayega, sirf wahi clip jayegi.
+    Asal upload background thread me hota hai; ye route turant
+    {"status": "uploading"} lauta deti hai aur progress clip ke
+    metadata.upload me milti rehti hai."""
     import time as _time
 
     from ..storage import database as db
-    from ..upload.youtube import is_configured, upload_video
+    from ..upload.youtube import is_configured
 
     row = db.query_one("SELECT * FROM clips WHERE id=?", (cid,))
     if not row:
@@ -354,19 +424,24 @@ def upload_clip(cid: str):
         raise HTTPException(
             400, "YouTube connect nahi hai — pehle terminal me "
                  "scripts/youtube_auth.py chalao (one-time setup)")
+    if up.get("status") == "uploading":
+        started = up.get("started_at") or 0
+        if _time.time() - started < 1800:
+            # Ek upload pehle se chal raha hai — dusra mat chalao,
+            # warna YouTube par ek hi clip ki duplicate video banegi.
+            return {"status": "uploading",
+                    "progress": up.get("progress", 0)}
+        # 30 min se purana "uploading" matlab pichla wala mar gaya
+        # (backend band ho gaya hoga) — naye upload ki ijazat do.
     title, description, tags = _shorts_package(row, md)
-    try:
-        url = upload_video(row["output_path"], title, description,
-                           tags=tags, privacy_status="public")
-    except Exception as exc:
-        raise HTTPException(502, f"YouTube upload fail hua: {exc}")
-    from ..upload.youtube import video_id_from_url
-    st, err = _thumbnail(video_id_from_url(url))
-    md["upload"] = {"status": "uploaded", "youtube_url": url,
-                    "uploaded_at": _time.time(), "thumbnail": st,
-                    **({"thumbnail_error": err} if err else {})}
+    md["upload"] = {"status": "uploading", "progress": 0,
+                    "started_at": _time.time()}
     pm.update_clip(cid, metadata=md)
-    return {"youtube_url": url, "thumbnail": st, "thumbnail_error": err}
+    import threading
+    threading.Thread(target=_upload_worker,
+                     args=(cid, title, description, tags),
+                     daemon=True).start()
+    return {"status": "uploading", "progress": 0}
 
 
 @router.post("/projects/{pid}/render")

@@ -1,6 +1,6 @@
-/** YouTube upload status badge — data worker clip ke metadata.upload
- *  me likhta hai (cloud worker flow se). Manual/local-only clips par
- *  kuch nahi dikhta. */
+/** YouTube upload status badge — status clip ke metadata.upload me
+ *  backend likhta hai (background upload thread, asal progress % ke
+ *  saath). Kabhi upload start hi nahi hua to kuch nahi dikhta. */
 export default function UploadBadge({ c }: { c: any }) {
   const up = c?.metadata?.upload;
   if (!up || !up.status || up.status === "none") return null;
@@ -19,6 +19,25 @@ export default function UploadBadge({ c }: { c: any }) {
             video dekho ↗
           </a>
         )}
+      </div>
+    );
+  }
+  if (up.status === "uploading") {
+    const pct = Math.max(0, Math.min(100, Math.round(up.progress || 0)));
+    return (
+      <div className="rounded-xl bg-blue-500/15 px-3 py-2 text-sm text-blue-200 space-y-1.5">
+        <div>⬆ YouTube par upload ho raha hai… {pct}%</div>
+        <div className="h-1.5 rounded bg-white/10 overflow-hidden">
+          <div className="h-full bg-blue-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+  if (up.status === "failed") {
+    return (
+      <div className="rounded-xl bg-red-500/15 px-3 py-2 text-sm text-red-300">
+        ⚠ YouTube upload fail hua{up.error ? `: ${up.error}` : ""} — Editor me
+        ⬆ Upload button se dobara try karo
       </div>
     );
   }
